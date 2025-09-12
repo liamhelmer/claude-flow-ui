@@ -27,7 +27,14 @@ class TmuxStreamManager {
    */
   async createSession(sessionName = null, initialCommand = null) {
     const name = sessionName || `terminal-${Date.now()}`;
-    const socketPath = path.join(os.tmpdir(), `tmux-${name}.sock`);
+    // Ensure socket directory exists
+    const socketDir = path.join(os.tmpdir(), '.claude-flow-tmux');
+    if (!fs.existsSync(socketDir)) {
+      fs.mkdirSync(socketDir, { recursive: true, mode: 0o755 });
+    }
+    const socketPath = path.join(socketDir, `${name}.sock`);
+    
+    console.log(`[TmuxStream] Creating session ${name} with socket: ${socketPath}`);
     
     // Kill any existing session with same name
     await this.killSession(name).catch(() => {});
@@ -49,9 +56,22 @@ class TmuxStreamManager {
     
     await new Promise((resolve, reject) => {
       const proc = spawn('tmux', tmuxArgs, { stdio: 'pipe' });
+      let errorOutput = '';
+      
+      proc.stderr.on('data', (data) => {
+        errorOutput += data.toString();
+      });
       proc.on('exit', (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(`Failed to create tmux session: ${code}`));
+        if (code === 0) {
+          console.log(`[TmuxStream] Successfully created tmux session ${name}`);
+          resolve();
+        } else {
+          console.error(`[TmuxStream] Failed to create tmux session ${name}: exit code ${code}`);
+          if (errorOutput) {
+            console.error(`[TmuxStream] Error output: ${errorOutput}`);
+          }
+          reject(new Error(`Failed to create tmux session: ${code} - ${errorOutput}`));
+        }
       });
       proc.on('error', reject);
     });
@@ -400,7 +420,15 @@ class TmuxStreamManager {
               }
               resolve(output);
             } else {
-              console.error(`[TmuxStream] Tmux capture failed with code ${code} for session ${sessionName}: ${errorOutput}`);
+              // Enhanced error logging for debugging
+              console.error(`[TmuxStream] Tmux capture failed with code ${code} for session ${sessionName}`);
+              console.error(`[TmuxStream] Socket path: ${socketPath}`);
+              console.error(`[TmuxStream] Error output: ${errorOutput || '(no error output)'}`);
+              
+              // Check if socket exists
+              if (!require('fs').existsSync(socketPath)) {
+                console.error(`[TmuxStream] Socket file does not exist: ${socketPath}`);
+              }
               
               // Try fallback methods before failing
               this.fallbackCapture(sessionName, socketPath)
@@ -465,7 +493,28 @@ class TmuxStreamManager {
    */
   async killSession(sessionName) {
     const session = this.sessions.get(sessionName);
-    if (!session) return;
+    if (!session) {
+      // Try to kill by name anyway in case it exists but isn't tracked
+      const socketDir = path.join(os.tmpdir(), '.claude-flow-tmux');
+      const socketPath = path.join(socketDir, `${sessionName}.sock`);
+      if (fs.existsSync(socketPath)) {
+        await new Promise((resolve) => {
+          const proc = spawn('tmux', [
+            '-S', socketPath,
+            'kill-session',
+            '-t', sessionName
+          ], { stdio: 'pipe' });
+          proc.on('exit', () => resolve());
+          proc.on('error', () => resolve());
+        });
+        try {
+          fs.unlinkSync(socketPath);
+        } catch (err) {
+          // Ignore cleanup errors
+        }
+      }
+      return;
+    }
     
     // Stop streaming
     if (session.captureInterval) {
@@ -530,6 +579,12 @@ class TmuxStreamManager {
    * Validate that a tmux session exists and is accessible
    */
   async validateSession(sessionName, socketPath) {
+    // First check if socket file exists
+    if (!fs.existsSync(socketPath)) {
+      console.error(`[TmuxStream] Socket path does not exist: ${socketPath}`);
+      return Promise.reject(new Error(`Socket path does not exist: ${socketPath}`));
+    }
+    
     return new Promise((resolve, reject) => {
       const tmux = spawn('tmux', [
         '-S', socketPath,
@@ -562,7 +617,36 @@ class TmuxStreamManager {
    * Fallback capture method using platform-specific strategies
    */
   async fallbackCapture(sessionName, socketPath) {
-    console.log(`[TmuxStream] Attempting platform-specific fallback capture methods for session ${sessionName}`);
+    console.log(`[TmuxStream] Attempting fallback capture methods for session ${sessionName}`);
+    
+    // First, let's verify the session actually exists
+    const sessionCheck = await new Promise((resolve) => {
+      const check = spawn('tmux', [
+        '-S', socketPath,
+        'list-sessions'
+      ], { stdio: 'pipe' });
+      
+      let output = '';
+      check.stdout.on('data', (data) => {
+        output += data.toString();
+      });
+      
+      check.on('exit', (code) => {
+        if (code === 0) {
+          console.log(`[TmuxStream] Active sessions on socket ${socketPath}: ${output.trim()}`);
+          resolve(output.includes(sessionName));
+        } else {
+          console.error(`[TmuxStream] Could not list sessions on socket ${socketPath}`);
+          resolve(false);
+        }
+      });
+      
+      check.on('error', () => resolve(false));
+    });
+    
+    if (!sessionCheck) {
+      throw new Error(`Session ${sessionName} not found on socket ${socketPath}`);
+    }
     
     // Get platform-specific strategies if not already loaded
     if (!this.captureStrategies) {
