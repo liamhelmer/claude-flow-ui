@@ -8,6 +8,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { v4: uuidv4 } = require('uuid');
+const PlatformCompatibility = require('./platform-compatibility');
 
 class TmuxStreamManager {
   constructor() {
@@ -16,6 +17,9 @@ class TmuxStreamManager {
     this.disconnectTimers = new Map(); // clientId -> disconnect timer
     this.DISCONNECT_GRACE_PERIOD = 10000; // 10 seconds
     this.STREAM_INTERVAL = 50; // Stream update interval in ms
+    this.platformCompat = new PlatformCompatibility();
+    this.captureStrategies = null; // Will be initialized async
+    this.platformAdjustments = this.platformCompat.getTmuxCommandAdjustments();
   }
 
   /**
@@ -121,6 +125,11 @@ class TmuxStreamManager {
       if (!this.sessions.has(sessionName)) {
         clearInterval(captureInterval);
         return;
+      }
+      
+      // Only capture if there are active clients
+      if (session.clients.size === 0) {
+        return; // Skip capture when no clients are connected
       }
       
       try {
@@ -307,34 +316,147 @@ class TmuxStreamManager {
   }
 
   /**
-   * Capture full screen content from tmux
+   * Capture full screen content from tmux with robust error handling
    */
-  async captureFullScreen(sessionName, socketPath) {
+  async captureFullScreen(sessionName, socketPath, retryCount = 0) {
+    const maxRetries = 3;
+    const timeout = 5000; // 5 second timeout
+    
     return new Promise((resolve, reject) => {
-      const tmux = spawn('tmux', [
-        '-S', socketPath,
-        'capture-pane',
-        '-t', sessionName,
-        '-S', '-',    // Start from beginning of history
-        '-E', '-',    // End at end of history
-        '-e',         // Include escape sequences
-        '-p'          // Print to stdout
-      ], { stdio: 'pipe' });
+      // First validate that the session exists
+      this.validateSession(sessionName, socketPath)
+        .then(() => {
+          // Only log capture attempts in debug mode or on retries
+          if (process.env.DEBUG_TMUX || retryCount > 0) {
+            console.log(`[TmuxStream] Capturing screen for session ${sessionName} (attempt ${retryCount + 1}/${maxRetries + 1})`);
+          }
+          
+          const tmuxArgs = [
+            '-S', socketPath,
+            'capture-pane',
+            '-t', sessionName,
+            '-S', '-',    // Start from beginning of history
+            '-E', '-',    // End at end of history
+            '-e',         // Include escape sequences
+            '-p'          // Print to stdout
+          ];
+          
+          const tmux = spawn('tmux', tmuxArgs, { 
+            stdio: 'pipe',
+            timeout: timeout
+          });
 
-      let output = '';
-      tmux.stdout.on('data', (data) => {
-        output += data.toString();
-      });
+          let output = '';
+          let errorOutput = '';
+          let timeoutHandle = null;
+          let processCompleted = false;
 
-      tmux.on('exit', (code) => {
-        if (code === 0) {
-          resolve(output);
-        } else {
-          reject(new Error(`Failed to capture screen: ${code}`));
-        }
-      });
+          // Set up timeout
+          timeoutHandle = setTimeout(() => {
+            if (!processCompleted) {
+              console.warn(`[TmuxStream] Tmux capture timed out for session ${sessionName}, killing process`);
+              tmux.kill('SIGKILL');
+              processCompleted = true;
+              
+              // Try fallback capture method
+              this.fallbackCapture(sessionName, socketPath)
+                .then(fallbackOutput => {
+                  console.log(`[TmuxStream] Fallback capture succeeded for session ${sessionName}`);
+                  resolve(fallbackOutput);
+                })
+                .catch(fallbackError => {
+                  console.error(`[TmuxStream] Fallback capture also failed: ${fallbackError.message}`);
+                  if (retryCount < maxRetries) {
+                    console.log(`[TmuxStream] Retrying capture for session ${sessionName} (${retryCount + 1}/${maxRetries})`);
+                    setTimeout(() => {
+                      this.captureFullScreen(sessionName, socketPath, retryCount + 1)
+                        .then(resolve)
+                        .catch(reject);
+                    }, 1000 * (retryCount + 1)); // Exponential backoff
+                  } else {
+                    reject(new Error(`Failed to capture screen after ${maxRetries} retries: timeout`));
+                  }
+                });
+            }
+          }, timeout);
 
-      tmux.on('error', reject);
+          tmux.stdout.on('data', (data) => {
+            output += data.toString();
+          });
+          
+          tmux.stderr.on('data', (data) => {
+            errorOutput += data.toString();
+          });
+
+          tmux.on('exit', (code) => {
+            if (processCompleted) return;
+            processCompleted = true;
+            clearTimeout(timeoutHandle);
+            
+            if (code === 0) {
+              // Only log in debug mode to avoid spamming logs
+              if (process.env.DEBUG_TMUX) {
+                console.log(`[TmuxStream] Screen capture successful for session ${sessionName} (${output.length} bytes)`);
+              }
+              resolve(output);
+            } else {
+              console.error(`[TmuxStream] Tmux capture failed with code ${code} for session ${sessionName}: ${errorOutput}`);
+              
+              // Try fallback methods before failing
+              this.fallbackCapture(sessionName, socketPath)
+                .then(fallbackOutput => {
+                  console.log(`[TmuxStream] Fallback capture succeeded after tmux failed with code ${code}`);
+                  resolve(fallbackOutput);
+                })
+                .catch(fallbackError => {
+                  console.error(`[TmuxStream] Fallback capture also failed: ${fallbackError.message}`);
+                  if (retryCount < maxRetries && this.shouldRetryError(code, errorOutput)) {
+                    console.log(`[TmuxStream] Retrying capture for session ${sessionName} due to recoverable error`);
+                    setTimeout(() => {
+                      this.captureFullScreen(sessionName, socketPath, retryCount + 1)
+                        .then(resolve)
+                        .catch(reject);
+                    }, 1000 * (retryCount + 1)); // Exponential backoff
+                  } else {
+                    reject(new Error(`Failed to capture screen: code ${code}, error: ${errorOutput || 'unknown error'}`));
+                  }
+                });
+            }
+          });
+
+          tmux.on('error', (err) => {
+            if (processCompleted) return;
+            processCompleted = true;
+            clearTimeout(timeoutHandle);
+            
+            console.error(`[TmuxStream] Tmux spawn error for session ${sessionName}: ${err.message}`);
+            
+            // Try fallback capture on spawn error
+            this.fallbackCapture(sessionName, socketPath)
+              .then(fallbackOutput => {
+                console.log(`[TmuxStream] Fallback capture succeeded after spawn error`);
+                resolve(fallbackOutput);
+              })
+              .catch(fallbackError => {
+                console.error(`[TmuxStream] Fallback capture also failed: ${fallbackError.message}`);
+                if (retryCount < maxRetries) {
+                  console.log(`[TmuxStream] Retrying capture for session ${sessionName} after spawn error`);
+                  setTimeout(() => {
+                    this.captureFullScreen(sessionName, socketPath, retryCount + 1)
+                      .then(resolve)
+                      .catch(reject);
+                  }, 2000 * (retryCount + 1)); // Longer delay for spawn errors
+                } else {
+                  reject(new Error(`Failed to capture screen after ${maxRetries} retries: ${err.message}`));
+                }
+              });
+          });
+          
+        })
+        .catch(validationError => {
+          console.error(`[TmuxStream] Session validation failed for ${sessionName}: ${validationError.message}`);
+          reject(new Error(`Session validation failed: ${validationError.message}`));
+        });
     });
   }
 
@@ -402,6 +524,149 @@ class TmuxStreamManager {
     
     this.clientStreams.clear();
     console.log('🧹 Cleaned up all tmux sessions');
+  }
+
+  /**
+   * Validate that a tmux session exists and is accessible
+   */
+  async validateSession(sessionName, socketPath) {
+    return new Promise((resolve, reject) => {
+      const tmux = spawn('tmux', [
+        '-S', socketPath,
+        'has-session',
+        '-t', sessionName
+      ], { stdio: 'pipe', timeout: 3000 });
+
+      let timeoutHandle = setTimeout(() => {
+        tmux.kill('SIGKILL');
+        reject(new Error('Session validation timed out'));
+      }, 3000);
+
+      tmux.on('exit', (code) => {
+        clearTimeout(timeoutHandle);
+        if (code === 0) {
+          resolve();
+        } else {
+          reject(new Error(`Session ${sessionName} does not exist or is not accessible`));
+        }
+      });
+
+      tmux.on('error', (err) => {
+        clearTimeout(timeoutHandle);
+        reject(new Error(`Failed to validate session: ${err.message}`));
+      });
+    });
+  }
+
+  /**
+   * Fallback capture method using platform-specific strategies
+   */
+  async fallbackCapture(sessionName, socketPath) {
+    console.log(`[TmuxStream] Attempting platform-specific fallback capture methods for session ${sessionName}`);
+    
+    // Get platform-specific strategies if not already loaded
+    if (!this.captureStrategies) {
+      this.captureStrategies = this.platformCompat.getRecommendedCaptureStrategy();
+    }
+    
+    // Try platform-optimized strategies first
+    for (const strategy of this.captureStrategies) {
+      try {
+        console.log(`[TmuxStream] Trying fallback strategy: ${strategy.name} - ${strategy.description}`);
+        
+        // Replace template variables in args
+        const args = strategy.args.map(arg => 
+          arg.replace('{socketPath}', socketPath).replace('{sessionName}', sessionName)
+        );
+        
+        const output = await this.executeWithTimeout('tmux', args, strategy.timeout);
+        if (output && output.trim()) {
+          console.log(`[TmuxStream] Fallback strategy ${strategy.name} succeeded (${output.length} bytes)`);
+          return output;
+        }
+      } catch (error) {
+        console.warn(`[TmuxStream] Fallback strategy ${strategy.name} failed: ${error.message}`);
+        continue;
+      }
+    }
+    
+    // If all strategies fail, return a minimal error message with platform info
+    const platformInfo = this.platformCompat.getPlatformInfo();
+    throw new Error(`All fallback capture strategies failed on ${platformInfo.platform} ${platformInfo.arch}`);
+  }
+
+  /**
+   * Execute a command with timeout
+   */
+  async executeWithTimeout(command, args, timeoutMs = 5000) {
+    return new Promise((resolve, reject) => {
+      const process = spawn(command, args, { stdio: 'pipe' });
+      let output = '';
+      let errorOutput = '';
+      let completed = false;
+
+      const timeoutHandle = setTimeout(() => {
+        if (!completed) {
+          completed = true;
+          process.kill('SIGKILL');
+          reject(new Error('Command execution timed out'));
+        }
+      }, timeoutMs);
+
+      process.stdout.on('data', (data) => {
+        output += data.toString();
+      });
+
+      process.stderr.on('data', (data) => {
+        errorOutput += data.toString();
+      });
+
+      process.on('exit', (code) => {
+        if (completed) return;
+        completed = true;
+        clearTimeout(timeoutHandle);
+        
+        if (code === 0) {
+          resolve(output);
+        } else {
+          reject(new Error(`Command failed with code ${code}: ${errorOutput}`));
+        }
+      });
+
+      process.on('error', (err) => {
+        if (completed) return;
+        completed = true;
+        clearTimeout(timeoutHandle);
+        reject(err);
+      });
+    });
+  }
+
+  /**
+   * Determine if an error is retryable
+   */
+  shouldRetryError(exitCode, errorOutput) {
+    // Retry on common temporary errors
+    const retryableErrors = [
+      'resource temporarily unavailable',
+      'no such file or directory',
+      'connection refused',
+      'broken pipe',
+      'input/output error'
+    ];
+    
+    const retryableCodes = [1, 2, 127]; // Common temporary failure codes
+    
+    if (retryableCodes.includes(exitCode)) {
+      return true;
+    }
+    
+    if (errorOutput) {
+      const lowerError = errorOutput.toLowerCase();
+      return retryableErrors.some(error => lowerError.includes(error));
+    }
+    
+    return false;
   }
 }
 

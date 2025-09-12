@@ -192,3 +192,126 @@ config-server.js
 
 # Socket directories
 .tmux-sockets/
+
+# =======================================================
+# Additional Temporary Files & System Files
+# =======================================================
+
+# OS-specific temporary files
+Thumbs.db
+Desktop.ini
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+~$*
+
+# Editor temporary/backup files
+*~
+*.bak
+*.backup
+*.old
+*.orig
+*.tmp
+*.temp
+.*.sw[a-z]
+\#*\#
+.#*
+
+# Temporary directories
+/tmp/
+/temp/
+/.tmp/
+/.temp/
+**/tmp/
+**/temp/
+
+# Lock files (but keep package-lock.json)
+*.lock
+!package-lock.json
+!yarn.lock
+!pnpm-lock.yaml
+
+# Patch files
+*.patch
+*.diff
+
+# Archive files (usually temporary)
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+
+# Claude-Flow specific patterns
+claude-flow-ui-*
+.claude-flow-cache/
+.claude-flow-tmp/
+ruv-swarm/
+.ruv-swarm/
+flow-nexus/
+.flow-nexus/
+
+# SPARC methodology files
+sparc-*
+.sparc/
+sparc-output/
+
+# Neural and AI training data
+neural-data/
+.neural-cache/
+training-data/
+models/
+
+# Agent coordination files
+agent-coordination/
+agent-state/
+agent-logs/
+.agent-cache/
+
+# Benchmark and performance data
+benchmarks/
+.benchmark-cache/
+performance-logs/
+
+# Hook execution logs
+.hooks/
+hook-logs/
+hook-cache/
+
+# Session and state files
+.session/
+session-state/
+state-backup/
+
+# Cache directories
+.cache/
+cache/
+.build-cache/
+
+# NPM/Node temporary files
+.npm-cache/
+.pnpm-store/
+.yarn-cache/
+npm-shrinkwrap.json
+
+# TypeScript cache
+*.tscache/
+.tscache/
+
+# Test coverage and reports
+coverage-final.json
+.nyc_output/
+test-results/
+test-reports/
+
+# Documentation build artifacts
+docs/_build/
+docs/.doctrees/
+
+# Publishing readiness files  
+PUBLISHING_READINESS_REPORT.md
+docs/PUBLISHING_*
+
+# NPM ignore file (local only)
+.npmignore

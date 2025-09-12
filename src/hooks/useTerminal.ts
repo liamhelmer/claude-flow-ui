@@ -203,21 +203,35 @@ export const useTerminal = ({
     // Function to open terminal after all critical addons are loaded
     const openTerminalWithAddons = () => {
       terminal.open(containerRef.current!);
-      console.log('[Terminal] 🎨 Terminal opened with Canvas renderer');
+      console.log('[Terminal] 🎨 Terminal opened with renderer');
     };
     
     // Dynamically load addons only on client side to avoid SSR issues
     if (typeof window !== 'undefined') {
-      // Load Canvas addon first (most important for ANSI)
-      import('@xterm/addon-canvas').then(({ CanvasAddon }) => {
-        const canvasAddon = new CanvasAddon();
-        terminal.loadAddon(canvasAddon);
-        console.log('[Terminal] ✅ Canvas addon loaded for enhanced ANSI rendering');
+      // Try to load WebGL addon first for best performance
+      import('@xterm/addon-webgl').then(({ WebglAddon }) => {
+        const webglAddon = new WebglAddon();
         
-        // Open terminal with Canvas renderer
-        openTerminalWithAddons();
+        // Check if WebGL is supported by opening terminal first
+        terminal.open(containerRef.current!);
         
-        // Load other addons after Canvas is ready
+        try {
+          terminal.loadAddon(webglAddon);
+          console.log('[Terminal] 🚀 WebGL renderer loaded successfully for maximum performance');
+        } catch (webglError) {
+          console.warn('[Terminal] ⚠️ WebGL not supported, falling back to Canvas renderer:', webglError);
+          
+          // Fallback to Canvas addon
+          import('@xterm/addon-canvas').then(({ CanvasAddon }) => {
+            const canvasAddon = new CanvasAddon();
+            terminal.loadAddon(canvasAddon);
+            console.log('[Terminal] ✅ Canvas addon loaded as fallback renderer');
+          }).catch(canvasError => {
+            console.warn('[Terminal] ⚠️ Canvas addon also failed, using DOM renderer:', canvasError);
+          });
+        }
+        
+        // Load other addons after renderer is ready
         Promise.all([
           import('@xterm/addon-web-links').then(({ WebLinksAddon }) => {
             const webLinksAddon = new WebLinksAddon();
@@ -235,9 +249,38 @@ export const useTerminal = ({
         });
         
       }).catch(err => {
-        console.warn('[Terminal] ⚠️ Failed to load CanvasAddon (fallback to DOM renderer):', err);
-        // Fallback to DOM renderer
-        openTerminalWithAddons();
+        console.warn('[Terminal] ⚠️ Failed to load WebGL addon, falling back to Canvas:', err);
+        
+        // Fallback to Canvas addon
+        import('@xterm/addon-canvas').then(({ CanvasAddon }) => {
+          const canvasAddon = new CanvasAddon();
+          terminal.loadAddon(canvasAddon);
+          console.log('[Terminal] ✅ Canvas addon loaded as fallback renderer');
+          
+          // Open terminal with Canvas renderer
+          openTerminalWithAddons();
+          
+          // Load other addons after Canvas is ready
+          Promise.all([
+            import('@xterm/addon-web-links').then(({ WebLinksAddon }) => {
+              const webLinksAddon = new WebLinksAddon();
+              terminal.loadAddon(webLinksAddon);
+              console.log('[Terminal] ✅ WebLinks addon loaded');
+            }),
+            import('@xterm/addon-unicode11').then(({ Unicode11Addon }) => {
+              const unicode11Addon = new Unicode11Addon();
+              terminal.loadAddon(unicode11Addon);
+              terminal.unicode.activeVersion = '11';
+              console.log('[Terminal] ✅ Unicode11 addon loaded for better character support');
+            })
+          ]).catch(err => {
+            console.warn('[Terminal] ⚠️ Some non-critical addons failed to load:', err);
+          });
+        }).catch(canvasErr => {
+          console.warn('[Terminal] ⚠️ Failed to load Canvas addon (fallback to DOM renderer):', canvasErr);
+          // Fallback to DOM renderer
+          openTerminalWithAddons();
+        });
       });
     } else {
       // Server-side: just open the terminal
