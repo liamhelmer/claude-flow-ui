@@ -1,0 +1,83 @@
+{
+  "timestamp": "2025-09-11T03:45:00.000Z",
+  "test_suite_health": "CRITICAL",
+  "overall_status": "FAILING",
+  "coverage": {
+    "lines": 19.45,
+    "statements": 18.26,
+    "functions": 13.71,
+    "branches": 7.95,
+    "threshold_met": false
+  },
+  "critical_issues": [
+    {
+      "category": "missing_modules",
+      "count": 47,
+      "severity": "critical",
+      "examples": [
+        "src/lib/file-system-utils",
+        "src/hooks/useWebSocketConnection", 
+        "src/components/ErrorBoundary",
+        "src/lib/memory-leak-detector",
+        "src/lib/tmux/session-manager"
+      ]
+    },
+    {
+      "category": "test_environment_errors",
+      "count": 12,
+      "severity": "high",
+      "description": "window/DOM not defined in Node.js environment"
+    },
+    {
+      "category": "mock_initialization_errors",
+      "count": 8,
+      "severity": "medium",
+      "description": "Variables used before initialization in mocks"
+    }
+  ],
+  "test_failures": {
+    "total_tests": 67,
+    "passing_tests": 0,
+    "failing_tests": 47,
+    "skipped_tests": 20,
+    "flaky_tests": []
+  },
+  "performance_issues": [
+    {
+      "test_duration": "29.4s",
+      "threshold": "5s",
+      "exceeded_by": "24.4s"
+    }
+  ],
+  "missing_coverage_areas": [
+    "hooks/useTerminal.ts (0% coverage)",
+    "hooks/useWebSocket.ts (0% coverage)", 
+    "lib/websocket/client.ts (0% coverage)",
+    "lib/state/store.ts (0% coverage)",
+    "lib/api/index.ts (0% coverage)"
+  ],
+  "recommendations": [
+    "URGENT: Create missing module implementations",
+    "Fix test environment configuration for Node.js vs JSDOM",
+    "Implement proper mock initialization patterns",
+    "Add comprehensive unit tests for core modules",
+    "Set up accessibility testing framework",
+    "Implement performance benchmarking suite",
+    "Create integration test workflows"
+  ],
+  "hive_coordination_needed": {
+    "coder_tasks": [
+      "Implement missing modules: file-system-utils, memory-leak-detector",
+      "Create ErrorBoundary component",
+      "Fix useWebSocketConnection hook",
+      "Implement tmux session manager"
+    ],
+    "tester_tasks": [
+      "Fix test environment configuration",
+      "Implement proper mock patterns",
+      "Create comprehensive test suites for new modules",
+      "Add accessibility and performance testing"
+    ],
+    "priority": "CRITICAL"
+  }
+}

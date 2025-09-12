@@ -1,0 +1,244 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+html,
+body {
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-family: var(--font-geist-sans);
+}
+
+@layer components {
+  .terminal-container {
+    @apply bg-terminal-bg text-terminal-text font-mono;
+  }
+  
+  .sidebar-container {
+    @apply bg-sidebar-bg border-r border-sidebar-border text-sidebar-text;
+  }
+  
+  .tab-button {
+    @apply px-4 py-2 text-sm font-medium rounded-t-lg transition-colors;
+  }
+  
+  .tab-button-active {
+    @apply bg-white text-gray-900;
+  }
+  
+  .tab-button-inactive {
+    @apply bg-gray-700 text-gray-300 hover:bg-sidebar-hover;
+  }
+}
+
+/* Terminal container */
+.terminal-container {
+  background: #000;
+  height: 100%;
+  position: relative;
+}
+
+/* xterm.js terminal styles */
+.xterm {
+  padding: 10px;
+  height: 100%;
+}
+
+/* Terminal wrapper styling */
+.xterm-wrapper {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Terminal with fixed size and hidden scrollbar */
+.xterm {
+  height: 100%;
+  width: 100%;
+  padding: 10px !important;
+  font-family: 'JetBrains Mono', 'Menlo', 'Monaco', 'Consolas', monospace !important;
+}
+
+.xterm-viewport {
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+  right: 0 !important;
+}
+
+/* Ensure terminal content is properly contained */
+.xterm-screen {
+  position: relative !important;
+  width: 100% !important;
+  height: 100% !important;
+  overflow: hidden !important;
+}
+
+/* Hide scrollbar completely */
+.xterm-viewport::-webkit-scrollbar {
+  width: 0px !important;
+  height: 0px !important;
+  display: none !important;
+  visibility: hidden !important;
+}
+
+.xterm-viewport::-webkit-scrollbar-track {
+  display: none !important;
+}
+
+.xterm-viewport::-webkit-scrollbar-thumb {
+  display: none !important;
+}
+
+/* Ensure rows are properly displayed */
+.xterm-rows {
+  width: 100% !important;
+  height: auto !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  overflow: visible !important;
+}
+
+/* Individual row styling */
+.xterm-row {
+  width: 100% !important;
+  height: auto !important;
+  white-space: pre !important;
+  overflow: visible !important;
+}
+
+/* Cursor styling */
+.xterm-cursor-layer {
+  position: absolute !important;
+  pointer-events: none !important;
+}
+
+.xterm-cursor {
+  position: absolute !important;
+  background-color: rgba(255, 255, 255, 0.3) !important;
+  border: 1px solid #fff !important;
+}
+
+/* Fix terminal sizing and line display issues */
+.xterm-screen {
+  width: 100% !important;
+  overflow: visible !important;
+}
+
+/* Ensure proper line wrapping and display */
+.xterm-rows .xterm-row {
+  white-space: pre !important;
+  word-break: keep-all !important;
+  overflow: visible !important;
+}
+
+/* Terminal container should properly contain content */
+.terminal-container .xterm-wrapper {
+  width: 100% !important;
+  height: 100% !important;
+  overflow: hidden !important;
+}
+
+/* Dynamic terminal box styling based on backend config */
+.terminal-fixed-size {
+  /* Dynamically sized based on backend terminal config */
+  /* Approximate: 8px char width, 20px line height for monospace + padding */
+  min-width: 600px !important;   /* Minimum reasonable width */
+  min-height: 400px !important;  /* Minimum reasonable height */
+  max-width: 1400px !important;  /* Maximum reasonable width */
+  max-height: 1000px !important; /* Maximum reasonable height */
+  flex-shrink: 0 !important;
+  flex-grow: 0 !important;
+}
+
+/* Override xterm sizing for fixed terminal */
+.terminal-fixed-size .xterm {
+  width: auto !important;
+  height: auto !important;
+  padding: 10px !important;
+}
+
+.terminal-fixed-size .xterm-wrapper {
+  width: auto !important;
+  height: auto !important;
+  overflow: hidden !important;
+}
+
+.terminal-fixed-size .xterm-viewport {
+  width: auto !important;
+  height: auto !important;
+}
+
+/* Ensure terminal screen fits exactly */
+.terminal-fixed-size .xterm-screen {
+  width: auto !important;
+  height: auto !important;
+  overflow: visible !important;
+}
+
+/* Fix for vertical text display issues */
+.xterm,
+.xterm-screen,
+.xterm-rows,
+.xterm-row {
+  writing-mode: horizontal-tb !important;
+  text-orientation: mixed !important;
+  direction: ltr !important;
+}
+
+/* Ensure terminal text containers use proper flex direction */
+.terminal-container,
+.terminal-container > *,
+.xterm-wrapper,
+.xterm-screen {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: wrap !important;
+}
+
+/* Override any column layouts that might affect terminal text */
+.terminal-container .xterm-rows {
+  display: block !important;
+  flex-direction: initial !important;
+}
+
+.terminal-container .xterm-row {
+  display: block !important;
+  flex-direction: initial !important;
+  white-space: pre !important;
+}
+
+/* Prevent text rotation transforms */
+.xterm *,
+.terminal-container *,
+.xterm-wrapper *,
+.xterm-screen * {
+  transform: none !important;
+  writing-mode: horizontal-tb !important;
+  text-orientation: mixed !important;
+}

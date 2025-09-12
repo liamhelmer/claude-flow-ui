@@ -1,0 +1,194 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
+.yarn/install-state.gz
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# local env files
+.env*.local
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+logs
+*.log
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+
+# Dependency directories
+jspm_packages/
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# parcel-bundler cache (https://parceljs.org/)
+.cache
+.parcel-cache
+
+# next.js build output
+.next
+
+# nuxt.js build output
+.nuxt
+
+# vuepress build output
+.vuepress/dist
+
+# Serverless directories
+.serverless
+
+# FuseBox cache
+.fusebox/
+
+# DynamoDB Local files
+.dynamodb/
+
+# TernJS port file
+.tern-port
+
+
+
+# Claude and Claude-Flow Configuration & Runtime Files
+# =======================================================
+
+# Claude configuration directories
+.claude/
+.claude-flow/
+
+# Swarm and coordination directories
+.hive-mind/
+.swarm/
+memory/
+
+# MCP (Model Context Protocol) configuration
+.mcp.json
+claude-flow.config.json
+
+# Claude-Flow executables and scripts
+claude-flow
+claude-flow.bat
+claude-flow.ps1
+
+# Database files (SQLite, coordination memory)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# Memory and session data
+memory/claude-flow-data.json
+memory/sessions/*
+!memory/sessions/README.md
+memory/agents/*
+!memory/agents/README.md
+coordination/memory_bank/*
+coordination/subtasks/*
+coordination/orchestration/*
+coordination/
+exports/
+backups/
+templates/
+
+# Claude-Flow subdirectories in src
+src/.claude-flow/
+src/.hive-mind/
+src/.swarm/
+
+# Temporary and log files
+*.backup
+test-*.js
+test-*.html
+test-*.ts
+validate-*.js
+verify-*.js
+
+# Export and session files
+memory-export-*.json
+hive-mind-prompt-*.txt
+session-export-*.json
+swarm-state-*.json
+coordination-log-*.txt
+agent-*.json
+swarm-*.json
+ui-*T*Z.log
+
+# Claude-Flow specific logs
+claude-flow-*.log
+swarm-*.log
+hive-mind-*.log
+coordination-*.log
+ansi-test-results.log
+server.log
+
+# Configuration backups and temporary configs
+*.config.backup
+*.json.backup
+*.js.backup
+.claude-flow-ui.config.json
+.roomodes
+INFRASTRUCTURE_SUCCESS.md
+USAGE.md
+
+# Server files (temporary/generated)
+unified-server.js
+unified-server.js.backup
+websocket-server.js
+config-server.js
+
+# Socket directories
+.tmux-sockets/

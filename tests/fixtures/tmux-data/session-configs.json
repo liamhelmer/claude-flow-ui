@@ -1,0 +1,21 @@
+{
+  "development": {
+    "windows": [
+      "claude-flow-main",
+      "testing",
+      "monitoring",
+      "shell"
+    ],
+    "defaultCommand": "claude-flow tdd",
+    "workingDirectory": "/home/user/development"
+  },
+  "production": {
+    "windows": [
+      "claude-flow-prod",
+      "logs",
+      "metrics"
+    ],
+    "defaultCommand": "claude-flow agent spawn --type production-validator",
+    "workingDirectory": "/opt/claude-flow"
+  }
+}

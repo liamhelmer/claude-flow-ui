@@ -1,0 +1,10 @@
+claude-flow --help
+claude-flow sparc modes
+claude-flow swarm init --topology mesh
+claude-flow agent spawn --type coder --name "test-coder"
+claude-flow tdd "create user service"
+git status
+npm test
+git add .
+git commit -m "Add user service with tests"
+claude-flow performance report
