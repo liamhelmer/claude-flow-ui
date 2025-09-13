@@ -9,7 +9,7 @@ export const useWebSocket = () => {
 
   const connect = useCallback(async () => {
     if (isConnecting.current || wsClient.connected) {
-      console.log('[useWebSocket] Already connected or connecting');
+      console.debug('[useWebSocket] Already connected or connecting');
       return;
     }
 
@@ -17,9 +17,9 @@ export const useWebSocket = () => {
     setLoading(true);
 
     try {
-      console.log('[useWebSocket] Attempting to connect...');
+      console.debug('[useWebSocket] Attempting to connect...');
       await wsClient.connect();
-      console.log('[useWebSocket] Connected successfully');
+      console.debug('[useWebSocket] Connected successfully');
       setError(null);
     } catch (error) {
       console.error('[useWebSocket] Failed to connect to WebSocket:', error);
@@ -84,7 +84,7 @@ export const useWebSocket = () => {
 
   const requestTerminalConfig = useCallback((sessionId: string) => {
     if (wsClient.connected) {
-      console.log(`[useWebSocket] Requesting terminal config for session: ${sessionId}`);
+      console.debug(`[useWebSocket] Requesting terminal config for session: ${sessionId}`);
       wsClient.send('request-config', { sessionId });
     } else {
       console.warn('WebSocket not connected, cannot request terminal config');
@@ -92,7 +92,7 @@ export const useWebSocket = () => {
   }, []);
 
   const requestTerminalConfigAsync = useCallback((sessionId: string, timeoutMs: number = 5000): Promise<any> => {
-    console.log(`[useWebSocket] Requesting terminal config async for session: ${sessionId}`);
+    console.debug(`[useWebSocket] Requesting terminal config async for session: ${sessionId}`);
     return wsClient.requestTerminalConfigAsync(sessionId, timeoutMs);
   }, []);
 
@@ -100,13 +100,13 @@ export const useWebSocket = () => {
   useEffect(() => {
     // Delay connection to avoid StrictMode double-mount issues
     const timer = setTimeout(() => {
-      console.log('[useWebSocket] Mounting, attempting to connect...');
+      console.debug('[useWebSocket] Mounting, attempting to connect...');
       connect();
     }, 100);
 
     return () => {
       clearTimeout(timer);
-      console.log('[useWebSocket] Unmounting...');
+      console.debug('[useWebSocket] Unmounting...');
       // Don't disconnect on cleanup in development
       if (process.env.NODE_ENV === 'production') {
         disconnect();
@@ -129,19 +129,25 @@ export const useWebSocket = () => {
     requestTerminalConfig,
     requestTerminalConfigAsync,
     on: (event: string, callback: (data: any) => void) => {
-      console.log(`[useWebSocket] 🔧 DEBUG: Registering listener for event: ${event}`);
+      if (process.env.NODE_ENV === 'development') {
+        console.debug(`[useWebSocket] 🔧 DEBUG: Registering listener for event: ${event}`);
+      }
       if (wsClient.on) {
         wsClient.on(event, callback);
-        console.log(`[useWebSocket] 🔧 DEBUG: Listener registered successfully for: ${event}`);
-      } else {
+        if (process.env.NODE_ENV === 'development') {
+          console.debug(`[useWebSocket] 🔧 DEBUG: Listener registered successfully for: ${event}`);
+        }
+      } else if (process.env.NODE_ENV === 'development') {
         console.warn(`[useWebSocket] ⚠️ wsClient.on is not available for event: ${event}`);
       }
     },
     off: (event: string, callback: (data: any) => void) => {
-      console.log(`[useWebSocket] 🔧 DEBUG: Removing listener for event: ${event}`);
+      if (process.env.NODE_ENV === 'development') {
+        console.debug(`[useWebSocket] 🔧 DEBUG: Removing listener for event: ${event}`);
+      }
       if (wsClient.off) {
         wsClient.off(event, callback);
-      } else {
+      } else if (process.env.NODE_ENV === 'development') {
         console.warn(`[useWebSocket] ⚠️ wsClient.off is not available for event: ${event}`);
       }
     },

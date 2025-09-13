@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils';
 import type { TerminalProps } from '@/types';
 
 export default function Terminal({ sessionId, className }: TerminalProps) {
-  console.log('[Terminal Component] 🔧 Rendering with sessionId:', sessionId, typeof sessionId);
+  console.debug('[Terminal Component] 🔧 Rendering with sessionId:', sessionId, typeof sessionId);
   
   const {
     terminalRef,
@@ -26,7 +26,7 @@ export default function Terminal({ sessionId, className }: TerminalProps) {
     sessionId,
   });
   
-  console.log('[Terminal Component] 🔧 Hook result:', {
+  console.debug('[Terminal Component] 🔧 Hook result:', {
     terminalRef: terminalRef,
     hasTerminal: !!terminal,
     backendConfig: backendTerminalConfig,
@@ -162,7 +162,7 @@ export default function Terminal({ sessionId, className }: TerminalProps) {
           >
             <div
               ref={(el) => {
-                console.log('[Terminal Component] 🔧 Ref callback called:', el);
+                console.debug('[Terminal Component] 🔧 Ref callback called:', el);
                 if (terminalRef && typeof terminalRef === 'object' && 'current' in terminalRef) {
                   terminalRef.current = el;
                 }

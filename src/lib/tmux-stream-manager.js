@@ -9,6 +9,7 @@ const fs = require('fs');
 const os = require('os');
 const { v4: uuidv4 } = require('uuid');
 const PlatformCompatibility = require('./platform-compatibility');
+const { getInstance: getSecureTempDir } = require('./secure-temp-dir');
 
 class TmuxStreamManager {
   constructor() {
@@ -27,19 +28,23 @@ class TmuxStreamManager {
    */
   async createSession(sessionName = null, initialCommand = null) {
     const name = sessionName || `terminal-${Date.now()}`;
-    // Ensure socket directory exists
-    const socketDir = path.join(os.tmpdir(), '.claude-flow-tmux');
-    if (!fs.existsSync(socketDir)) {
-      fs.mkdirSync(socketDir, { recursive: true, mode: 0o755 });
-    }
-    const socketPath = path.join(socketDir, `${name}.sock`);
     
-    console.log(`[TmuxStream] Creating session ${name} with socket: ${socketPath}`);
+    // Use secure temp directory for socket
+    const secureTempDir = getSecureTempDir();
+    const socketPath = secureTempDir.getSocketPath(name);
+    
+    if (process.env.DEBUG_TMUX) {
+      console.log(`[TmuxStream] Creating session ${name}`);
+      console.log(`[TmuxStream] Socket path: ${socketPath}`);
+      console.log(`[TmuxStream] Socket length: ${socketPath.length} chars`);
+      console.log(`[TmuxStream] Command: ${initialCommand || 'default shell'}`);
+    }
     
     // Kill any existing session with same name
     await this.killSession(name).catch(() => {});
     
     // Create new tmux session
+    // Important: When using custom socket path, tmux needs to keep the server alive
     const tmuxArgs = [
       '-S', socketPath,
       'new-session',
@@ -49,31 +54,84 @@ class TmuxStreamManager {
       '-y', '40'
     ];
     
+    // Always start with a shell to keep session alive
+    const shell = process.env.SHELL || '/bin/bash';
+    
     if (initialCommand) {
+      // Run command in shell but keep shell alive after
       tmuxArgs.push('-c', process.cwd());
-      tmuxArgs.push(initialCommand);
+      // Use a trap to keep the shell alive even if the command fails
+      const shellCmd = `${shell} -c '${initialCommand}; echo ""; echo "Command completed with exit code: $?"; echo "Press Enter to continue..."; exec ${shell}'`;
+      tmuxArgs.push(shellCmd);
+    } else {
+      // Just start an interactive shell
+      tmuxArgs.push('-c', process.cwd());
+      tmuxArgs.push(shell);
     }
     
     await new Promise((resolve, reject) => {
       const proc = spawn('tmux', tmuxArgs, { stdio: 'pipe' });
       let errorOutput = '';
+      let stdOutput = '';
+      
+      proc.stdout.on('data', (data) => {
+        stdOutput += data.toString();
+      });
       
       proc.stderr.on('data', (data) => {
         errorOutput += data.toString();
       });
+      
       proc.on('exit', (code) => {
         if (code === 0) {
-          console.log(`[TmuxStream] Successfully created tmux session ${name}`);
-          resolve();
+          if (process.env.DEBUG_TMUX) {
+            console.log(`[TmuxStream] Successfully created tmux session ${name}`);
+            console.log(`[TmuxStream] Session created with socket: ${socketPath}`);
+          }
+          // Log success if debug is enabled
+          if (process.env.DEBUG_TMUX || process.env.DEBUG) {
+            console.log(`[TmuxStream] Successfully created tmux session ${name}`);
+          }
+          
+          // Verify the session actually exists after creation
+          const verifyProc = spawn('tmux', ['-S', socketPath, 'has-session', '-t', name]);
+          verifyProc.on('exit', (verifyCode) => {
+            if (verifyCode === 0) {
+              if (process.env.DEBUG_TMUX || process.env.DEBUG) {
+                console.log(`[TmuxStream] Verified session ${name} exists`);
+              }
+              
+              // Don't set remain-on-exit so pane can die when command completes
+              // This allows proper termination detection
+              
+              resolve();
+            } else {
+              console.error(`[TmuxStream] Session ${name} verification failed after creation`);
+              console.error(`[TmuxStream] Socket: ${socketPath}, exists: ${require('fs').existsSync(socketPath)}`);
+              reject(new Error(`Session verification failed after creation`));
+            }
+          });
+          verifyProc.on('error', (err) => {
+            console.error(`[TmuxStream] Failed to verify session: ${err.message}`);
+            reject(err);
+          });
         } else {
           console.error(`[TmuxStream] Failed to create tmux session ${name}: exit code ${code}`);
+          console.error(`[TmuxStream] Socket path attempted: ${socketPath}`);
+          console.error(`[TmuxStream] Command was: tmux ${tmuxArgs.join(' ')}`);
           if (errorOutput) {
-            console.error(`[TmuxStream] Error output: ${errorOutput}`);
+            console.error(`[TmuxStream] Stderr: ${errorOutput}`);
+          }
+          if (stdOutput) {
+            console.error(`[TmuxStream] Stdout: ${stdOutput}`);
           }
           reject(new Error(`Failed to create tmux session: ${code} - ${errorOutput}`));
         }
       });
-      proc.on('error', reject);
+      proc.on('error', (err) => {
+        console.error(`[TmuxStream] Failed to spawn tmux: ${err.message}`);
+        reject(err);
+      });
     });
     
     // Set up session info
@@ -84,8 +142,12 @@ class TmuxStreamManager {
       clients: new Set(),
       historyBuffer: '',
       lastCapture: '',
+      lastCaptureLines: [],
       streaming: false,
-      streamProcess: null
+      captureInterval: null,
+      initialCapturesSent: new Set(), // Track which clients have received initial capture
+      lastActivityTime: Date.now(),
+      lastDebugLog: 0
     };
     
     this.sessions.set(name, sessionInfo);
@@ -93,7 +155,9 @@ class TmuxStreamManager {
     // Start streaming for this session
     this.startSessionStream(name);
     
-    console.log(`✅ Created tmux session: ${name}`);
+    if (process.env.DEBUG_TMUX || process.env.DEBUG) {
+      console.log(`✅ Created tmux session: ${name}`);
+    }
     return { name, socketPath };
   }
 
@@ -106,44 +170,55 @@ class TmuxStreamManager {
     
     session.streaming = true;
     
-    // Use tmux pipe-pane to stream output continuously
-    const streamProcess = spawn('tmux', [
-      '-S', session.socketPath,
-      'pipe-pane',
-      '-t', sessionName,
-      '-o',
-      'cat >> /dev/stdout'
-    ], { stdio: 'pipe' });
-    
-    // Accumulate streamed data
-    streamProcess.stdout.on('data', (chunk) => {
-      session.historyBuffer += chunk.toString();
-      
-      // Broadcast to all connected clients for this session
-      for (const clientId of session.clients) {
-        const clientStream = this.clientStreams.get(clientId);
-        if (clientStream && clientStream.callback) {
-          clientStream.callback(chunk.toString());
-        }
+    // Don't use pipe-pane as it can interfere with the session
+    // Instead, rely on periodic capture for updates
+    if (process.env.DEBUG_TMUX) {
+      console.log(`[TmuxStream] Starting capture-based streaming for session ${sessionName}`);
+      const session = this.sessions.get(sessionName);
+      if (session) {
+        console.log(`[TmuxStream] Session info:`, {
+          name: session.name,
+          socketPath: session.socketPath,
+          socketExists: require('fs').existsSync(session.socketPath),
+          created: new Date(session.created).toISOString()
+        });
       }
-    });
+    }
     
-    streamProcess.on('error', (err) => {
-      console.error(`Stream error for session ${sessionName}:`, err);
-      session.streaming = false;
-    });
+    // No pipe-pane process needed - we'll use periodic capture instead
     
-    streamProcess.on('exit', () => {
-      console.log(`Stream ended for session ${sessionName}`);
-      session.streaming = false;
-    });
-    
-    session.streamProcess = streamProcess;
+    // Track capture skip count to reduce unnecessary captures
+    let captureSkipCount = 0;
     
     // Also set up periodic capture for full screen state
     const captureInterval = setInterval(async () => {
       if (!this.sessions.has(sessionName)) {
         clearInterval(captureInterval);
+        return;
+      }
+      
+      // CRITICAL: Check if socket file still exists
+      if (!fs.existsSync(session.socketPath)) {
+        console.log(`🔌 [CRITICAL] Socket file deleted for session ${sessionName} - initiating shutdown`);
+        clearInterval(captureInterval);
+        session.streaming = false;
+        
+        // Notify all clients that session is terminating
+        for (const clientId of session.clients) {
+          const clientStream = this.clientStreams.get(clientId);
+          if (clientStream && clientStream.callback) {
+            clientStream.callback('\r\n🛑 Tmux socket terminated - shutting down...\r\n');
+          }
+        }
+        
+        // Clean up session (don't await to avoid hanging)
+        this.cleanupSession(sessionName).catch(err => {
+          console.error('Error during cleanup:', err);
+        });
+        
+        // Trigger application shutdown
+        console.log('🛑 Socket terminated - shutting down application...');
+        process.exit(0);
         return;
       }
       
@@ -153,24 +228,148 @@ class TmuxStreamManager {
       }
       
       try {
-        const capture = await this.captureFullScreen(sessionName, session.socketPath);
-        if (capture !== session.lastCapture) {
-          session.lastCapture = capture;
-          session.historyBuffer = capture; // Update history with latest full state
+        // Check if pane is dead (command completed)
+        const isPaneDead = await this.isPaneDead(sessionName, session.socketPath);
+        if (isPaneDead) {
+          console.log(`🔌 [DEBUG] Command completed in session ${sessionName} - pane is dead`);
+          clearInterval(captureInterval);
+          session.streaming = false;
           
-          // Send full update to all clients
+          // Notify all clients
           for (const clientId of session.clients) {
             const clientStream = this.clientStreams.get(clientId);
             if (clientStream && clientStream.callback) {
-              // Send clear + full content to ensure sync
-              clientStream.callback('\x1b[2J\x1b[H' + capture);
+              clientStream.callback('\r\n✅ Command completed - shutting down...\r\n');
+            }
+          }
+          
+          // Clean up session (don't await to avoid hanging)
+          this.cleanupSession(sessionName).catch(err => {
+            console.error('Error during cleanup:', err);
+          });
+          
+          // Trigger application shutdown
+          console.log('🛑 Command completed - shutting down application...');
+          process.exit(0);
+          return;
+        }
+        
+        // Skip some captures if there's been no recent activity AND no new clients
+        const timeSinceActivity = Date.now() - (session.lastActivityTime || Date.now());
+        // Don't skip if we have clients that haven't received initial capture
+        const hasUninitializedClients = Array.from(session.clients).some(
+          clientId => !session.initialCapturesSent.has(clientId)
+        );
+        const shouldSkip = !hasUninitializedClients && timeSinceActivity > 1000 && captureSkipCount < 10;
+        
+        if (shouldSkip) {
+          captureSkipCount++;
+          if (process.env.DEBUG_TMUX && captureSkipCount === 1) {
+            console.log(`[TmuxStream] Skipping captures due to inactivity for session ${sessionName}`);
+          }
+          return; // Skip this capture cycle
+        }
+        
+        captureSkipCount = 0;
+        
+        // Capture current pane content (not full history)
+        const capture = await this.capturePane(sessionName, session.socketPath);
+        
+        if (process.env.DEBUG_TMUX && session.clients.size > 0) {
+          // Only log occasionally to reduce spam
+          const now = Date.now();
+          if (!session.lastDebugLog || now - session.lastDebugLog > 5000) {
+            console.log(`[TmuxStream] Capturing screen for session ${sessionName} (${session.clients.size} clients)`);
+            session.lastDebugLog = now;
+          }
+        }
+        
+        if (capture !== session.lastCapture) {
+          session.lastActivityTime = Date.now(); // Reset activity timer on changes
+          // Calculate the difference
+          const currentLines = capture.split('\n');
+          const previousLines = session.lastCaptureLines;
+          
+          // For new content, only send what's changed
+          let hasChanges = false;
+          let updateData = '';
+          
+          // If this is completely different content (like after a clear), send full update
+          if (previousLines.length === 0 || currentLines.length !== previousLines.length) {
+            hasChanges = true;
+            updateData = '\x1b[2J\x1b[H' + capture; // Clear and full content
+          } else {
+            // Check for line-by-line changes and only send differences
+            for (let i = 0; i < currentLines.length; i++) {
+              if (currentLines[i] !== previousLines[i]) {
+                hasChanges = true;
+                // Move cursor to line and update it
+                updateData += `\x1b[${i + 1};1H\x1b[2K${currentLines[i]}\n`;
+              }
+            }
+          }
+          
+          if (hasChanges) {
+            session.lastCapture = capture;
+            session.lastCaptureLines = currentLines;
+            session.historyBuffer = capture; // Keep full state for new clients
+            
+            // Send updates to all clients
+            for (const clientId of session.clients) {
+              const clientStream = this.clientStreams.get(clientId);
+              if (clientStream && clientStream.callback) {
+                // Only send incremental updates to existing clients
+                if (session.initialCapturesSent.has(clientId)) {
+                  clientStream.callback(updateData);
+                }
+              }
             }
           }
         }
       } catch (err) {
-        console.error(`Capture error for session ${sessionName}:`, err);
+        // Check for fatal errors that should trigger shutdown
+        const errorMessage = err.message || '';
+        const isFatalError = errorMessage.includes('no server running') || 
+                            errorMessage.includes('can\'t find session') ||
+                            errorMessage.includes('session not found') ||
+                            errorMessage.includes('server not found');
+        
+        if (isFatalError) {
+          console.error(`🔴 [FATAL] Tmux capture failed for session ${sessionName}: ${errorMessage}`);
+          console.error('🛑 Fatal tmux error - initiating shutdown...');
+          
+          // Clear interval to stop further attempts
+          clearInterval(captureInterval);
+          session.streaming = false;
+          
+          // Notify all clients
+          for (const clientId of session.clients) {
+            const clientStream = this.clientStreams.get(clientId);
+            if (clientStream && clientStream.callback) {
+              clientStream.callback('\r\n🔴 Fatal error: Tmux server terminated\r\n');
+            }
+          }
+          
+          // Clean up session (don't await to avoid hanging)
+          this.cleanupSession(sessionName).catch(err => {
+            console.error('Error during cleanup:', err);
+          });
+          
+          // Exit the process immediately
+          process.exit(1);
+          return;
+        }
+        
+        // Non-fatal errors are just logged
+        if (process.env.DEBUG_TMUX) {
+          console.error(`[TmuxStream] Capture error for session ${sessionName}:`, err.message);
+          console.error(`[TmuxStream] Socket path: ${session.socketPath}`);
+          console.error(`[TmuxStream] Socket exists: ${require('fs').existsSync(session.socketPath)}`);
+        } else {
+          console.error(`Capture error for session ${sessionName}:`, err.message);
+        }
       }
-    }, this.STREAM_INTERVAL);
+    }, 200); // Increased interval to 200ms to reduce CPU usage
     
     session.captureInterval = captureInterval;
   }
@@ -188,11 +387,16 @@ class TmuxStreamManager {
     if (this.disconnectTimers.has(clientId)) {
       clearTimeout(this.disconnectTimers.get(clientId));
       this.disconnectTimers.delete(clientId);
-      console.log(`🔄 Client ${clientId} reconnected within grace period`);
+      if (process.env.DEBUG_TMUX || process.env.DEBUG) {
+        console.log(`🔄 Client ${clientId} reconnected within grace period`);
+      }
     }
     
     // Add client to session
     session.clients.add(clientId);
+    
+    // Reset activity timer when new client connects to ensure captures resume
+    session.lastActivityTime = Date.now();
     
     // Set up client stream
     const clientStream = {
@@ -205,12 +409,38 @@ class TmuxStreamManager {
     
     this.clientStreams.set(clientId, clientStream);
     
-    // Send full history immediately
-    if (session.historyBuffer) {
-      callback('\x1b[2J\x1b[H' + session.historyBuffer);
-    }
+    // Capture current screen state for new client
+    this.captureFullScreen(sessionName, session.socketPath)
+      .then(currentScreen => {
+        if (currentScreen && currentScreen.trim()) {
+          // Send current screen to new client
+          callback('\x1b[2J\x1b[H' + currentScreen);
+          session.historyBuffer = currentScreen; // Update history buffer
+          session.lastCapture = currentScreen;
+          session.lastCaptureLines = currentScreen.split('\n');
+          session.initialCapturesSent.add(clientId);
+          
+          if (process.env.DEBUG_TMUX || process.env.DEBUG) {
+            console.log(`📦 Sent initial screen to client ${clientId}: ${currentScreen.length} bytes`);
+          }
+        } else if (session.historyBuffer) {
+          // Fallback to history buffer if capture fails
+          callback('\x1b[2J\x1b[H' + session.historyBuffer);
+          session.initialCapturesSent.add(clientId);
+        }
+      })
+      .catch(err => {
+        console.error(`Failed to capture initial screen for client ${clientId}:`, err);
+        // Try to send whatever we have in history
+        if (session.historyBuffer) {
+          callback('\x1b[2J\x1b[H' + session.historyBuffer);
+          session.initialCapturesSent.add(clientId);
+        }
+      });
     
-    console.log(`👤 Client ${clientId} connected to session ${sessionName}`);
+    if (process.env.DEBUG_TMUX || process.env.DEBUG) {
+      console.log(`👤 Client ${clientId} connected to session ${sessionName}`);
+    }
     
     return {
       sessionName,
@@ -249,6 +479,7 @@ class TmuxStreamManager {
     const session = this.sessions.get(clientStream.sessionName);
     if (session) {
       session.clients.delete(clientId);
+      session.initialCapturesSent.delete(clientId); // Clean up initial capture tracking
       
       // If no more clients, consider stopping the stream
       if (session.clients.size === 0) {
@@ -257,10 +488,6 @@ class TmuxStreamManager {
         if (session.captureInterval) {
           clearInterval(session.captureInterval);
           session.captureInterval = null;
-        }
-        if (session.streamProcess) {
-          session.streamProcess.kill();
-          session.streamProcess = null;
         }
         session.streaming = false;
       }
@@ -293,7 +520,9 @@ class TmuxStreamManager {
     // Reconnect client to new session
     this.connectClient(clientId, newSession.name, clientStream.callback);
     
-    console.log(`🔄 Client ${clientId} refreshed from ${oldSessionName} to ${newSession.name}`);
+    if (process.env.DEBUG_TMUX || process.env.DEBUG) {
+      console.log(`🔄 Client ${clientId} refreshed from ${oldSessionName} to ${newSession.name}`);
+    }
     
     // Clean up old session if no clients
     if (oldSession && oldSession.clients.size === 0) {
@@ -309,6 +538,13 @@ class TmuxStreamManager {
   sendInput(sessionName, data) {
     const session = this.sessions.get(sessionName);
     if (!session) return;
+    
+    // Mark session as active to trigger captures
+    session.lastActivityTime = Date.now();
+    
+    if (process.env.DEBUG_TMUX) {
+      console.log(`[TmuxStream] Sending input to ${sessionName}: ${data.substring(0, 50)}${data.length > 50 ? '...' : ''}`);
+    }
     
     spawn('tmux', [
       '-S', session.socketPath,
@@ -326,6 +562,10 @@ class TmuxStreamManager {
     const session = this.sessions.get(sessionName);
     if (!session) return;
     
+    if (process.env.DEBUG_TMUX) {
+      console.log(`[TmuxStream] Resizing ${sessionName} to ${cols}x${rows}`);
+    }
+    
     spawn('tmux', [
       '-S', session.socketPath,
       'resize-window',
@@ -333,6 +573,44 @@ class TmuxStreamManager {
       '-x', cols.toString(),
       '-y', rows.toString()
     ], { stdio: 'ignore' });
+  }
+
+  /**
+   * Capture current pane content (visible area only)
+   */
+  async capturePane(sessionName, socketPath) {
+    return new Promise((resolve, reject) => {
+      const tmux = spawn('tmux', [
+        '-S', socketPath,
+        'capture-pane',
+        '-t', sessionName,
+        '-e',  // Include escape sequences
+        '-p'   // Print to stdout
+      ], { stdio: 'pipe' });
+
+      let output = '';
+      let errorOutput = '';
+
+      tmux.stdout.on('data', (data) => {
+        output += data.toString();
+      });
+
+      tmux.stderr.on('data', (data) => {
+        errorOutput += data.toString();
+      });
+
+      tmux.on('exit', (code) => {
+        if (code === 0) {
+          resolve(output);
+        } else {
+          reject(new Error(`Failed to capture pane: ${errorOutput}`));
+        }
+      });
+
+      tmux.on('error', (err) => {
+        reject(err);
+      });
+    });
   }
 
   /**
@@ -346,9 +624,13 @@ class TmuxStreamManager {
       // First validate that the session exists
       this.validateSession(sessionName, socketPath)
         .then(() => {
-          // Only log capture attempts in debug mode or on retries
-          if (process.env.DEBUG_TMUX || retryCount > 0) {
-            console.log(`[TmuxStream] Capturing screen for session ${sessionName} (attempt ${retryCount + 1}/${maxRetries + 1})`);
+          // Enhanced debug logging
+          if (process.env.DEBUG_TMUX) {
+            console.log(`[TmuxStream] Capture attempt ${retryCount + 1}/${maxRetries + 1} for ${sessionName}`);
+            console.log(`[TmuxStream] Using socket: ${socketPath}`);
+            console.log(`[TmuxStream] Tmux command: tmux -S "${socketPath}" capture-pane -t "${sessionName}" -p -e`);
+          } else if (retryCount > 0 && (process.env.DEBUG_TMUX || process.env.DEBUG)) {
+            console.log(`[TmuxStream] Retry ${retryCount}/${maxRetries} for session ${sessionName}`);
           }
           
           const tmuxArgs = [
@@ -416,7 +698,9 @@ class TmuxStreamManager {
             if (code === 0) {
               // Only log in debug mode to avoid spamming logs
               if (process.env.DEBUG_TMUX) {
-                console.log(`[TmuxStream] Screen capture successful for session ${sessionName} (${output.length} bytes)`);
+                console.log(`[TmuxStream] Capture successful: ${output.length} bytes`);
+                const preview = output.substring(0, 100).replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+                console.log(`[TmuxStream] First 100 chars: ${preview}`);
               }
               resolve(output);
             } else {
@@ -495,23 +779,27 @@ class TmuxStreamManager {
     const session = this.sessions.get(sessionName);
     if (!session) {
       // Try to kill by name anyway in case it exists but isn't tracked
-      const socketDir = path.join(os.tmpdir(), '.claude-flow-tmux');
-      const socketPath = path.join(socketDir, `${sessionName}.sock`);
-      if (fs.existsSync(socketPath)) {
-        await new Promise((resolve) => {
-          const proc = spawn('tmux', [
-            '-S', socketPath,
-            'kill-session',
-            '-t', sessionName
-          ], { stdio: 'pipe' });
-          proc.on('exit', () => resolve());
-          proc.on('error', () => resolve());
-        });
-        try {
-          fs.unlinkSync(socketPath);
-        } catch (err) {
-          // Ignore cleanup errors
+      const secureTempDir = getSecureTempDir();
+      try {
+        const socketPath = secureTempDir.getSocketPath(sessionName);
+        if (fs.existsSync(socketPath)) {
+          await new Promise((resolve) => {
+            const proc = spawn('tmux', [
+              '-S', socketPath,
+              'kill-session',
+              '-t', sessionName
+            ], { stdio: 'pipe' });
+            proc.on('exit', () => resolve());
+            proc.on('error', () => resolve());
+          });
+          try {
+            fs.unlinkSync(socketPath);
+          } catch (err) {
+            // Ignore cleanup errors
+          }
         }
+      } catch (err) {
+        // Socket path not found, session doesn't exist
       }
       return;
     }
@@ -519,9 +807,6 @@ class TmuxStreamManager {
     // Stop streaming
     if (session.captureInterval) {
       clearInterval(session.captureInterval);
-    }
-    if (session.streamProcess) {
-      session.streamProcess.kill();
     }
     
     // Kill tmux session
@@ -546,7 +831,9 @@ class TmuxStreamManager {
     }
     
     this.sessions.delete(sessionName);
-    console.log(`💀 Killed session ${sessionName}`);
+    if (process.env.DEBUG_TMUX || process.env.DEBUG) {
+      console.log(`💀 Killed session ${sessionName}`);
+    }
   }
 
   /**
@@ -581,8 +868,19 @@ class TmuxStreamManager {
   async validateSession(sessionName, socketPath) {
     // First check if socket file exists
     if (!fs.existsSync(socketPath)) {
-      console.error(`[TmuxStream] Socket path does not exist: ${socketPath}`);
+      if (process.env.DEBUG_TMUX) {
+        console.error(`[TmuxStream] Socket validation failed:`);
+        console.error(`  Session: ${sessionName}`);
+        console.error(`  Socket path: ${socketPath}`);
+        console.error(`  Socket exists: false`);
+        console.error(`  Parent dir: ${require('path').dirname(socketPath)}`);
+        console.error(`  Parent exists: ${fs.existsSync(require('path').dirname(socketPath))}`);
+      }
       return Promise.reject(new Error(`Socket path does not exist: ${socketPath}`));
+    }
+    
+    if (process.env.DEBUG_TMUX) {
+      console.log(`[TmuxStream] Validating session ${sessionName} at ${socketPath}`);
     }
     
     return new Promise((resolve, reject) => {
@@ -600,8 +898,14 @@ class TmuxStreamManager {
       tmux.on('exit', (code) => {
         clearTimeout(timeoutHandle);
         if (code === 0) {
+          if (process.env.DEBUG_TMUX) {
+            console.log(`[TmuxStream] Session ${sessionName} validated successfully`);
+          }
           resolve();
         } else {
+          if (process.env.DEBUG_TMUX) {
+            console.error(`[TmuxStream] Session validation failed with code ${code}`);
+          }
           reject(new Error(`Session ${sessionName} does not exist or is not accessible`));
         }
       });
@@ -617,7 +921,10 @@ class TmuxStreamManager {
    * Fallback capture method using platform-specific strategies
    */
   async fallbackCapture(sessionName, socketPath) {
-    console.log(`[TmuxStream] Attempting fallback capture methods for session ${sessionName}`);
+    if (process.env.DEBUG_TMUX) {
+      console.log(`[TmuxStream] Attempting fallback capture methods for session ${sessionName}`);
+      console.log(`[TmuxStream] Socket: ${socketPath}`);
+    }
     
     // First, let's verify the session actually exists
     const sessionCheck = await new Promise((resolve) => {
@@ -633,10 +940,14 @@ class TmuxStreamManager {
       
       check.on('exit', (code) => {
         if (code === 0) {
-          console.log(`[TmuxStream] Active sessions on socket ${socketPath}: ${output.trim()}`);
+          if (process.env.DEBUG_TMUX) {
+            console.log(`[TmuxStream] Active sessions on socket ${socketPath}: ${output.trim()}`);
+          }
           resolve(output.includes(sessionName));
         } else {
-          console.error(`[TmuxStream] Could not list sessions on socket ${socketPath}`);
+          if (process.env.DEBUG_TMUX) {
+            console.error(`[TmuxStream] Could not list sessions on socket ${socketPath} (exit code: ${code})`);
+          }
           resolve(false);
         }
       });
@@ -656,7 +967,13 @@ class TmuxStreamManager {
     // Try platform-optimized strategies first
     for (const strategy of this.captureStrategies) {
       try {
-        console.log(`[TmuxStream] Trying fallback strategy: ${strategy.name} - ${strategy.description}`);
+        if (process.env.DEBUG_TMUX) {
+          console.log(`[TmuxStream] Trying fallback strategy: ${strategy.name} - ${strategy.description}`);
+          const args = strategy.args.map(arg => 
+            arg.replace('{socketPath}', socketPath).replace('{sessionName}', sessionName)
+          );
+          console.log(`[TmuxStream] Command: tmux ${args.join(' ')}`);
+        }
         
         // Replace template variables in args
         const args = strategy.args.map(arg => 
@@ -751,6 +1068,48 @@ class TmuxStreamManager {
     }
     
     return false;
+  }
+
+  /**
+   * Check if a pane is dead (command has completed)
+   */
+  async isPaneDead(sessionName, socketPath) {
+    return new Promise((resolve) => {
+      const { spawn } = require('child_process');
+      const tmux = spawn('tmux', [
+        '-S', socketPath,
+        'list-panes',
+        '-t', sessionName,
+        '-F', '#{pane_dead}'
+      ], { stdio: 'pipe' });
+
+      let output = '';
+      
+      tmux.stdout.on('data', (data) => {
+        output += data.toString();
+      });
+
+      tmux.on('exit', (code) => {
+        if (code === 0) {
+          // Output will be '1' if pane is dead, '0' if alive
+          const isDead = output.trim() === '1';
+          if (isDead) {
+            if (process.env.DEBUG_TMUX || process.env.DEBUG) {
+              console.log(`💀 Pane is dead in session ${sessionName}`);
+            }
+          }
+          resolve(isDead);
+        } else {
+          // If we can't check pane status, assume it's still alive
+          resolve(false);
+        }
+      });
+
+      tmux.on('error', () => {
+        // On error, assume pane is still alive
+        resolve(false);
+      });
+    });
   }
 }
 

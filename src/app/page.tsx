@@ -62,13 +62,17 @@ export default function HomePage() {
 
   // Debug connection state
   useEffect(() => {
-    console.log('[HomePage] Connection state:', { connected, connecting });
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[HomePage] Connection state:', { connected, connecting });
+    }
   }, [connected, connecting]);
 
   // Handle the single terminal session
   useEffect(() => {
     const handleSessionCreated = (data: { sessionId: string }) => {
-      console.log('[HomePage] Connected to terminal:', data.sessionId);
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[HomePage] Connected to terminal:', data.sessionId);
+      }
       // Only maintain one session - the main terminal
       const mainSession: TerminalSession = {
         id: data.sessionId,
@@ -90,7 +94,9 @@ export default function HomePage() {
       exitCode?: number;
       signal?: string;
     }) => {
-      console.log('[HomePage] Terminal disconnected:', data.sessionId, data.reason);
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[HomePage] Terminal disconnected:', data.sessionId, data.reason);
+      }
       removeSession(data.sessionId);
       
       // If claude-flow exited, the whole UI will shut down
@@ -98,7 +104,9 @@ export default function HomePage() {
         const exitMsg = data.exitCode !== undefined 
           ? `Claude Flow exited with code ${data.exitCode}` 
           : 'Claude Flow process terminated';
-        console.log(exitMsg);
+        if (process.env.NODE_ENV === 'development') {
+          console.log(exitMsg);
+        }
       }
     };
 
@@ -114,7 +122,9 @@ export default function HomePage() {
   // Initialize with the main session when connected
   useEffect(() => {
     if (terminalSessions.length === 0 && connected && !isCreatingSession) {
-      console.log('[HomePage] Requesting main session...');
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[HomePage] Requesting main session...');
+      }
       setIsCreatingSession(true);
       createSession();
     }
@@ -128,12 +138,16 @@ export default function HomePage() {
 
   const handleSessionClose = (sessionId: string) => {
     // Cannot close the main terminal - it's managed by the process
-    console.log('Terminal lifecycle managed by claude-flow process');
+    if (process.env.NODE_ENV === 'development') {
+      console.log('Terminal lifecycle managed by claude-flow process');
+    }
   };
 
   const handleNewSession = () => {
     // Only one terminal allowed
-    console.log('Only one terminal per claude-flow process');
+    if (process.env.NODE_ENV === 'development') {
+      console.log('Only one terminal per claude-flow process');
+    }
   };
 
   // Show loading state

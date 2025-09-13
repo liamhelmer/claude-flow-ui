@@ -37,13 +37,13 @@ export const useTerminal = ({
   const [configRequested, setConfigRequested] = useState(false);
 
   const terminalConfig = useMemo(() => {
-    console.log(`[Terminal] 🔧 terminalConfig useMemo executing - backendTerminalConfig:`, backendTerminalConfig);
+    console.debug(`[Terminal] 🔧 terminalConfig useMemo executing - backendTerminalConfig:`, backendTerminalConfig);
     
     // If no backend config, return minimal config to prevent creation
     if (!backendTerminalConfig) {
       // Only log once per session to avoid spam during re-renders
       if (!hasLoggedWaiting) {
-        console.log('[Terminal] ⏳ Waiting for backend terminal configuration...');
+        console.debug('[Terminal] ⏳ Waiting for backend terminal configuration...');
         hasLoggedWaiting = true;
       }
       return {
@@ -59,7 +59,7 @@ export const useTerminal = ({
     
     // Reset the wait logged flag and log success when we have config
     if (hasLoggedWaiting) {
-      console.log('[Terminal] ✅ Backend terminal configuration received!');
+      console.debug('[Terminal] ✅ Backend terminal configuration received!');
       hasLoggedWaiting = false;
     }
     
@@ -76,12 +76,12 @@ export const useTerminal = ({
       rows: backendRows,  // Use ONLY backend-configured rows
     };
     
-    console.log(`[Terminal] 🔧 Config calculated: ${backendCols}x${backendRows} (backend config: available)`);
+    console.debug(`[Terminal] 🔧 Config calculated: ${backendCols}x${backendRows} (backend config: available)`);
     return { ...defaultConfig, ...config };
   }, [config, backendTerminalConfig]);
 
   const initTerminal = useCallback(() => {
-    console.log('[Terminal] 🔧 initTerminal: Starting check...', {
+    console.debug('[Terminal] 🔧 initTerminal: Starting check...', {
       hasContainer: !!containerRef.current,
       containerElement: containerRef.current,
       hasTerminal: !!terminalRef.current,
@@ -96,12 +96,12 @@ export const useTerminal = ({
     }
     
     if (terminalRef.current) {
-      console.log('[Terminal] 🔧 initTerminal: Terminal already exists - skipping creation');
+      console.debug('[Terminal] 🔧 initTerminal: Terminal already exists - skipping creation');
       return;
     }
     
     if (!terminalConfig || terminalConfig.cols === 0 || terminalConfig.rows === 0) {
-      console.log('[Terminal] 🔧 initTerminal: Invalid config', {
+      console.debug('[Terminal] 🔧 initTerminal: Invalid config', {
         hasConfig: !!terminalConfig,
         cols: terminalConfig?.cols,
         rows: terminalConfig?.rows
@@ -109,7 +109,7 @@ export const useTerminal = ({
       return;
     }
     
-    console.log('[Terminal] 🔧 initTerminal: Creating terminal with verified dimensions:', terminalConfig.cols, 'x', terminalConfig.rows);
+    console.debug('[Terminal] 🔧 initTerminal: Creating terminal with verified dimensions:', terminalConfig.cols, 'x', terminalConfig.rows);
 
     const terminal = new Terminal({
       // CRITICAL: Single theme configuration optimized for ANSI support
@@ -203,7 +203,7 @@ export const useTerminal = ({
     // Function to open terminal after all critical addons are loaded
     const openTerminalWithAddons = () => {
       terminal.open(containerRef.current!);
-      console.log('[Terminal] 🎨 Terminal opened with renderer');
+      console.debug('[Terminal] 🎨 Terminal opened with renderer');
     };
     
     // Dynamically load addons only on client side to avoid SSR issues
@@ -217,7 +217,7 @@ export const useTerminal = ({
         
         try {
           terminal.loadAddon(webglAddon);
-          console.log('[Terminal] 🚀 WebGL renderer loaded successfully for maximum performance');
+          console.debug('[Terminal] 🚀 WebGL renderer loaded successfully for maximum performance');
         } catch (webglError) {
           console.warn('[Terminal] ⚠️ WebGL not supported, falling back to Canvas renderer:', webglError);
           
@@ -225,7 +225,7 @@ export const useTerminal = ({
           import('@xterm/addon-canvas').then(({ CanvasAddon }) => {
             const canvasAddon = new CanvasAddon();
             terminal.loadAddon(canvasAddon);
-            console.log('[Terminal] ✅ Canvas addon loaded as fallback renderer');
+            console.debug('[Terminal] ✅ Canvas addon loaded as fallback renderer');
           }).catch(canvasError => {
             console.warn('[Terminal] ⚠️ Canvas addon also failed, using DOM renderer:', canvasError);
           });
@@ -236,13 +236,13 @@ export const useTerminal = ({
           import('@xterm/addon-web-links').then(({ WebLinksAddon }) => {
             const webLinksAddon = new WebLinksAddon();
             terminal.loadAddon(webLinksAddon);
-            console.log('[Terminal] ✅ WebLinks addon loaded');
+            console.debug('[Terminal] ✅ WebLinks addon loaded');
           }),
           import('@xterm/addon-unicode11').then(({ Unicode11Addon }) => {
             const unicode11Addon = new Unicode11Addon();
             terminal.loadAddon(unicode11Addon);
             terminal.unicode.activeVersion = '11';
-            console.log('[Terminal] ✅ Unicode11 addon loaded for better character support');
+            console.debug('[Terminal] ✅ Unicode11 addon loaded for better character support');
           })
         ]).catch(err => {
           console.warn('[Terminal] ⚠️ Some non-critical addons failed to load:', err);
@@ -255,7 +255,7 @@ export const useTerminal = ({
         import('@xterm/addon-canvas').then(({ CanvasAddon }) => {
           const canvasAddon = new CanvasAddon();
           terminal.loadAddon(canvasAddon);
-          console.log('[Terminal] ✅ Canvas addon loaded as fallback renderer');
+          console.debug('[Terminal] ✅ Canvas addon loaded as fallback renderer');
           
           // Open terminal with Canvas renderer
           openTerminalWithAddons();
@@ -265,13 +265,13 @@ export const useTerminal = ({
             import('@xterm/addon-web-links').then(({ WebLinksAddon }) => {
               const webLinksAddon = new WebLinksAddon();
               terminal.loadAddon(webLinksAddon);
-              console.log('[Terminal] ✅ WebLinks addon loaded');
+              console.debug('[Terminal] ✅ WebLinks addon loaded');
             }),
             import('@xterm/addon-unicode11').then(({ Unicode11Addon }) => {
               const unicode11Addon = new Unicode11Addon();
               terminal.loadAddon(unicode11Addon);
               terminal.unicode.activeVersion = '11';
-              console.log('[Terminal] ✅ Unicode11 addon loaded for better character support');
+              console.debug('[Terminal] ✅ Unicode11 addon loaded for better character support');
             })
           ]).catch(err => {
             console.warn('[Terminal] ⚠️ Some non-critical addons failed to load:', err);
@@ -321,7 +321,7 @@ export const useTerminal = ({
     
     // Use backend-configured dimensions - do not resize the backend terminal
     const { cols, rows } = terminal;
-    console.log(`[Terminal] Frontend terminal created with dimensions: ${cols}x${rows} (backend controls actual PTY size)`);
+    console.debug(`[Terminal] Frontend terminal created with dimensions: ${cols}x${rows} (backend controls actual PTY size)`);
 
     // Track scroll position for auto-scroll functionality and history
     const checkScrollPosition = () => {
@@ -400,11 +400,11 @@ export const useTerminal = ({
     
     // Enhanced terminal input handling with echo detection
     terminal.onData((data) => {
-      console.log(`[Terminal] 🎯 Input: ${JSON.stringify(data)} (${data.length} bytes)`);
+      console.debug(`[Terminal] 🎯 Input: ${JSON.stringify(data)} (${data.length} bytes)`);
       
       // Handle cursor position requests
       if (data === '\x1b[6n') {
-        console.log('[Terminal] 📍 Cursor position request detected');
+        console.debug('[Terminal] 📍 Cursor position request detected');
       }
       
       // Send raw keypress data immediately to the PTY backend
@@ -427,7 +427,7 @@ export const useTerminal = ({
       if (cursorMatch) {
         const row = parseInt(cursorMatch[1], 10);
         const col = parseInt(cursorMatch[2], 10);
-        console.log(`[Terminal] 📍 Cursor position update: ${row},${col}`);
+        console.debug(`[Terminal] 📍 Cursor position update: ${row},${col}`);
         setLastCursorPosition({ row, col });
       }
     };
@@ -519,7 +519,7 @@ export const useTerminal = ({
   }, []);
 
   const refreshTerminal = useCallback(() => {
-    console.log('[Terminal] 🔄 Refreshing terminal and requesting full history...');
+    console.debug('[Terminal] 🔄 Refreshing terminal and requesting full history...');
     
     // Send refresh command to backend
     if (sessionId && isConnected) {
@@ -540,19 +540,19 @@ export const useTerminal = ({
   const handleTerminalConfig = useCallback((data: any) => {
     // In single-terminal UI, accept any terminal-config from backend
     // This prevents session ID mismatch issues during initialization
-    console.log(`[Terminal] 🔧 [HANDLER CALLED] *** EVENT HANDLER EXECUTING *** Received config from backend: ${data.cols}x${data.rows} (session: ${data.sessionId})`);
-    console.log(`[Terminal] 🔧 Previous backendTerminalConfig:`, backendTerminalConfig);
+    console.debug(`[Terminal] 🔧 [HANDLER CALLED] *** EVENT HANDLER EXECUTING *** Received config from backend: ${data.cols}x${data.rows} (session: ${data.sessionId})`);
+    console.debug(`[Terminal] 🔧 Previous backendTerminalConfig:`, backendTerminalConfig);
     
     // Reset config requested flag so it can be requested again if needed
     setConfigRequested(false);
     
     // Destroy existing terminal if dimensions have changed
     if (terminalRef.current && (terminalRef.current.cols !== data.cols || terminalRef.current.rows !== data.rows)) {
-      console.log(`[Terminal] Terminal dimensions changing from ${terminalRef.current.cols}x${terminalRef.current.rows} to ${data.cols}x${data.rows} - recreating terminal`);
+      console.debug(`[Terminal] Terminal dimensions changing from ${terminalRef.current.cols}x${terminalRef.current.rows} to ${data.cols}x${data.rows} - recreating terminal`);
       destroyTerminal();
     }
     
-    console.log(`[Terminal] 🔧 Updating backendTerminalConfig cols/rows:`, { cols: data.cols, rows: data.rows });
+    console.debug(`[Terminal] 🔧 Updating backendTerminalConfig cols/rows:`, { cols: data.cols, rows: data.rows });
     setBackendTerminalConfig(prevConfig => {
       if (prevConfig) {
         return { ...prevConfig, cols: data.cols, rows: data.rows };
@@ -563,13 +563,13 @@ export const useTerminal = ({
 
   // Handle incoming terminal data
   useEffect(() => {
-    console.log('[Terminal] 🔧 DEBUG: useEffect for event handlers is running, registering terminal-config listener');
+    console.debug('[Terminal] 🔧 DEBUG: useEffect for event handlers is running, registering terminal-config listener');
     
     const handleTerminalData = (data: any) => {
       // Accept data from any sessionId since we only have one terminal
       // This fixes the mismatch where backend sends with globalSessionId
       if (terminalRef.current) {
-        console.log(`[Terminal] 📥 Received data for session ${data.sessionId} (local: ${sessionId})`);
+        console.debug(`[Terminal] 📥 Received data for session ${data.sessionId} (local: ${sessionId})`);
         const terminal = terminalRef.current;
         const viewport = terminal.element?.querySelector('.xterm-viewport') as HTMLElement;
         
@@ -588,7 +588,7 @@ export const useTerminal = ({
           
           if (data.metadata.hasEchoChange) {
             const newEchoState = data.metadata.echoState === 'on';
-            console.log(`[Terminal] 🔊 Echo state change detected: ${data.metadata.echoState}`);
+            console.debug(`[Terminal] 🔊 Echo state change detected: ${data.metadata.echoState}`);
             setEchoEnabled(newEchoState);
           }
         }
@@ -649,13 +649,13 @@ export const useTerminal = ({
     };
     
 
-    console.log('[Terminal] 🔧 DEBUG: Registering event listeners with WebSocket client');
+    console.debug('[Terminal] 🔧 DEBUG: Registering event listeners with WebSocket client');
     on('terminal-data', handleTerminalData);
     on('terminal-error', handleTerminalError);
     on('connection-change', handleConnectionChange);
-    console.log('[Terminal] 🔧 DEBUG: About to register terminal-config listener');
+    console.debug('[Terminal] 🔧 DEBUG: About to register terminal-config listener');
     on('terminal-config', handleTerminalConfig);
-    console.log('[Terminal] 🔧 DEBUG: terminal-config listener registered');
+    console.debug('[Terminal] 🔧 DEBUG: terminal-config listener registered');
     
     // Note: We no longer request config here as the main config request is now handled
     // by the async method in the connection change effect above. This fallback listener
@@ -672,26 +672,26 @@ export const useTerminal = ({
   // Fetch backend config via HTTP before terminal initialization
   // This happens completely out-of-band from the WebSocket connection
   useEffect(() => {
-    console.log('[Terminal] 🔧 Config fetch effect triggered - sessionId:', sessionId, 'backendTerminalConfig:', !!backendTerminalConfig);
+    console.debug('[Terminal] 🔧 Config fetch effect triggered - sessionId:', sessionId, 'backendTerminalConfig:', !!backendTerminalConfig);
     
     if (!sessionId) {
-      console.log('[Terminal] 🔧 No sessionId provided - skipping config fetch');
+      console.debug('[Terminal] 🔧 No sessionId provided - skipping config fetch');
       return;
     }
     
     if (backendTerminalConfig) {
-      console.log('[Terminal] 🔧 Backend config already exists - skipping fetch');
+      console.debug('[Terminal] 🔧 Backend config already exists - skipping fetch');
       return;
     }
 
-    console.log('[Terminal] 🔧 Fetching backend config via HTTP for session:', sessionId);
+    console.debug('[Terminal] 🔧 Fetching backend config via HTTP for session:', sessionId);
     setConfigRequestInProgress(true);
     setConfigError(null);
 
     // Fetch configuration from backend HTTP service
     terminalConfigService.fetchConfig(sessionId)
       .then((config) => {
-        console.log('[Terminal] 🔧 Backend config received via HTTP:', config);
+        console.debug('[Terminal] 🔧 Backend config received via HTTP:', config);
         setBackendTerminalConfig(config);
         setConfigRequestInProgress(false);
         setConfigError(null);
@@ -705,7 +705,7 @@ export const useTerminal = ({
 
   // Handle session changes - clear cached config for new sessions
   useEffect(() => {
-    console.log('[Terminal] 🔧 Session changed, clearing config cache');
+    console.debug('[Terminal] 🔧 Session changed, clearing config cache');
     setConfigRequestInProgress(false);
     setConfigError(null);
     setBackendTerminalConfig(null);
@@ -715,7 +715,7 @@ export const useTerminal = ({
 
   // Debug: Monitor container ref changes
   useEffect(() => {
-    console.log('[Terminal] 🔧 Container ref changed:', {
+    console.debug('[Terminal] 🔧 Container ref changed:', {
       hasContainer: !!containerRef.current,
       containerElement: containerRef.current
     });
@@ -731,7 +731,7 @@ export const useTerminal = ({
     const checkContainer = () => {
       const isReady = !!containerRef.current;
       if (isReady !== containerReady) {
-        console.log('[Terminal] Container ready state changed:', isReady);
+        console.debug('[Terminal] Container ready state changed:', isReady);
         setContainerReady(isReady);
       }
     };
@@ -753,7 +753,7 @@ export const useTerminal = ({
   
   // Initialize terminal when all conditions are met
   useEffect(() => {
-    console.log('[Terminal] Initialization check:', {
+    console.debug('[Terminal] Initialization check:', {
       hasBackendConfig: !!backendTerminalConfig,
       hasTerminalConfig: !!terminalConfig && terminalConfig.cols > 0,
       containerReady,
@@ -761,30 +761,30 @@ export const useTerminal = ({
     });
     
     if (!backendTerminalConfig || !terminalConfig || terminalConfig.cols === 0 || terminalConfig.rows === 0) {
-      console.log(`[Terminal] Waiting for backend terminal configuration... (backend: ${backendTerminalConfig ? 'ready' : 'waiting'}, config: ${terminalConfig && terminalConfig.cols > 0 ? 'ready' : 'waiting'})`);
+      console.debug(`[Terminal] Waiting for backend terminal configuration... (backend: ${backendTerminalConfig ? 'ready' : 'waiting'}, config: ${terminalConfig && terminalConfig.cols > 0 ? 'ready' : 'waiting'})`);
       return; // Don't create terminal until we have both backend config and valid dimensions
     }
     
     if (!containerReady) {
-      console.log('[Terminal] Waiting for container DOM element...');
+      console.debug('[Terminal] Waiting for container DOM element...');
       return; // Don't create terminal until container ref is available
     }
     
     if (terminalRef.current) {
-      console.log('[Terminal] Terminal already exists, skipping initialization');
+      console.debug('[Terminal] Terminal already exists, skipping initialization');
       return; // Don't create if terminal already exists
     }
     
-    console.log('[Terminal] All conditions met, creating terminal with dimensions:', backendTerminalConfig);
-    console.log('[Terminal] 🚀 CALLING initTerminal() - THIS IS WHERE XTERM GETS CREATED');
+    console.debug('[Terminal] All conditions met, creating terminal with dimensions:', backendTerminalConfig);
+    console.debug('[Terminal] 🚀 CALLING initTerminal() - THIS IS WHERE XTERM GETS CREATED');
     
     const terminal = initTerminal();
     
-    console.log('[Terminal] 🚀 initTerminal() returned:', !!terminal);
+    console.debug('[Terminal] 🚀 initTerminal() returned:', !!terminal);
     
     // Signal that terminal is ready for data
     if (terminal) {
-      console.log('[Terminal] Terminal initialized and ready for data');
+      console.debug('[Terminal] Terminal initialized and ready for data');
       // Focus after a short delay to ensure terminal is ready
       setTimeout(() => {
         focusTerminal();

@@ -155,9 +155,36 @@ function startWebSocketServer(port, claudeFlowArgs = [], workingDir, terminalSiz
   
   wsServer.on('exit', (code, signal) => {
     console.log(`💀 WebSocket server exited (code: ${code}, signal: ${signal})`);
-    console.log('Claude-flow process has terminated. Shutting down UI...');
-    // Exit the entire UI when claude-flow exits
-    process.exit(code || 0);
+    
+    // Determine exit reason
+    let exitReason = 'unknown';
+    if (signal === 'SIGTERM' || signal === 'SIGINT') {
+      exitReason = 'WebSocket server was terminated by signal';
+    } else if (code === 0) {
+      exitReason = 'WebSocket server exited cleanly (tmux terminated or command completed)';
+    } else {
+      exitReason = 'WebSocket server terminated unexpectedly';
+    }
+    
+    console.log(`🛑 ${exitReason}. Shutting down entire application...`);
+    
+    // Shutdown the web server first
+    if (globalServer) {
+      console.log('🌐 Closing web server...');
+      globalServer.close(() => {
+        console.log('✅ Web server closed');
+        process.exit(code || 0);
+      });
+      
+      // Force exit after 3 seconds if server doesn't close
+      setTimeout(() => {
+        console.error('⚠️  Forced shutdown after timeout');
+        process.exit(code || 1);
+      }, 3000);
+    } else {
+      // No server to close, just exit
+      process.exit(code || 0);
+    }
   });
   
   return wsServer;
@@ -165,6 +192,10 @@ function startWebSocketServer(port, claudeFlowArgs = [], workingDir, terminalSiz
 
 // Note: claude-flow is now started by the WebSocket server as a PTY process
 // This provides better integration with the terminal UI
+
+// Global references for cleanup
+let globalServer = null;
+let globalWsServer = null;
 
 // Main function
 async function main() {
@@ -191,6 +222,7 @@ async function main() {
   
   // Start WebSocket server with claude-flow args, working directory, and terminal size
   const wsServer = startWebSocketServer(wsPort, claudeFlowArgs, workingDir, terminalSize);
+  globalWsServer = wsServer; // Store reference for cleanup
   
   // Wait a moment for WebSocket server to start
   await new Promise(resolve => setTimeout(resolve, 1000));
@@ -222,6 +254,8 @@ async function main() {
     process.exit(1);
   });
   
+  globalServer = server; // Store reference for cleanup
+  
   server.listen(port, () => {
     console.log('');
     console.log('🐝 Claude Flow UI Server Started');
@@ -247,21 +281,28 @@ async function main() {
   process.on('SIGINT', shutdown);
   
   function shutdown() {
-    console.log('\n🛑 Shutting down...');
+    console.log('\n🛑 Shutting down all servers...');
     
-    if (wsServer) {
-      console.log('Stopping WebSocket server...');
-      wsServer.kill();
+    // Kill WebSocket server first (this will trigger its exit handler)
+    if (globalWsServer && !globalWsServer.killed) {
+      console.log('🔌 Stopping WebSocket server...');
+      globalWsServer.kill('SIGTERM');
+      globalWsServer = null;
     }
     
-    server.close(() => {
-      console.log('Server closed');
-      process.exit(0);
-    });
+    // Close web server
+    if (globalServer) {
+      console.log('🌐 Closing web server...');
+      globalServer.close(() => {
+        console.log('✅ Web server closed');
+        process.exit(0);
+      });
+      globalServer = null;
+    }
     
     // Force exit after 5 seconds
     setTimeout(() => {
-      console.error('Forced shutdown');
+      console.error('⚠️  Forced shutdown after timeout');
       process.exit(1);
     }, 5000);
   }

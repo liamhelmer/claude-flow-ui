@@ -59,11 +59,11 @@ class TerminalConfigService {
       // Always use the same origin as the current page
       // This ensures all requests go to the same host and port
       this.baseUrl = window.location.origin;
-      console.log('[TerminalConfigService] Using same origin:', this.baseUrl);
+      console.debug('[TerminalConfigService] Using same origin:', this.baseUrl);
     } else {
       // Server-side rendering - will be set on client
       this.baseUrl = '';
-      console.log('[TerminalConfigService] Server-side rendering - URL will be set on client');
+      console.debug('[TerminalConfigService] Server-side rendering - URL will be set on client');
     }
   }
 
@@ -72,17 +72,17 @@ class TerminalConfigService {
    * This method ensures only one request is made per session
    */
   async fetchConfig(sessionId: string): Promise<TerminalBackendConfig> {
-    console.log(`[TerminalConfigService] Fetching config for session: ${sessionId}`);
+    console.debug(`[TerminalConfigService] Fetching config for session: ${sessionId}`);
     
     // Check cache first
     if (this.configCache.has(sessionId)) {
-      console.log(`[TerminalConfigService] Returning cached config for session: ${sessionId}`);
+      console.debug(`[TerminalConfigService] Returning cached config for session: ${sessionId}`);
       return this.configCache.get(sessionId)!;
     }
 
     // Check if a request is already in progress
     if (this.configPromises.has(sessionId)) {
-      console.log(`[TerminalConfigService] Request already in progress for session: ${sessionId}`);
+      console.debug(`[TerminalConfigService] Request already in progress for session: ${sessionId}`);
       return this.configPromises.get(sessionId)!;
     }
 
@@ -115,7 +115,7 @@ class TerminalConfigService {
     }
     
     const url = `${this.baseUrl}/api/terminal-config/${sessionId}`;
-    console.log(`[TerminalConfigService] Making HTTP request to: ${url}`);
+    console.debug(`[TerminalConfigService] Making HTTP request to: ${url}`);
 
     try {
       const response = await fetch(url, {
@@ -132,7 +132,7 @@ class TerminalConfigService {
       }
 
       const config = await response.json();
-      console.log(`[TerminalConfigService] Config received for session ${sessionId}:`, config);
+      console.debug(`[TerminalConfigService] Config received for session ${sessionId}:`, config);
       
       // Validate the configuration
       if (!config.cols || !config.rows) {
@@ -159,11 +159,11 @@ class TerminalConfigService {
     if (sessionId) {
       this.configCache.delete(sessionId);
       this.configPromises.delete(sessionId);
-      console.log(`[TerminalConfigService] Cleared cache for session: ${sessionId}`);
+      console.debug(`[TerminalConfigService] Cleared cache for session: ${sessionId}`);
     } else {
       this.configCache.clear();
       this.configPromises.clear();
-      console.log('[TerminalConfigService] Cleared all cached configurations');
+      console.debug('[TerminalConfigService] Cleared all cached configurations');
     }
   }
 

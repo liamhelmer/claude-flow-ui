@@ -10,27 +10,26 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
+const { getInstance: getSecureTempDir } = require('./secure-temp-dir');
 
 class TmuxManager {
   constructor(workingDir = process.cwd()) {
     this.workingDir = workingDir;
-    // Use /tmp for sockets to avoid path length issues
-    this.socketDir = path.join('/tmp', '.claude-flow-sockets');
     this.sessionPrefix = 'cf'; // Shorter prefix to avoid path length issues
     this.activeSessions = new Map();
     
-    // Ensure socket directory exists
-    this.ensureSocketDir();
+    // Use secure temp directory for sockets
+    this.secureTempDir = getSecureTempDir();
+    this.socketDir = this.secureTempDir.getSocketDir();
+    console.log(`📁 Using secure socket directory: ${this.socketDir}`);
   }
 
   /**
-   * Ensure the socket directory exists
+   * Ensure the socket directory exists (now handled by SecureTempDir)
    */
   ensureSocketDir() {
-    if (!fs.existsSync(this.socketDir)) {
-      fs.mkdirSync(this.socketDir, { recursive: true });
-      console.log(`📁 Created tmux socket directory: ${this.socketDir}`);
-    }
+    // No longer needed - SecureTempDir handles this
+    // Kept for backward compatibility
   }
 
   /**
@@ -61,7 +60,7 @@ class TmuxManager {
    * Get the socket path for a session
    */
   getSocketPath(sessionName) {
-    return path.join(this.socketDir, `${sessionName}.sock`);
+    return this.secureTempDir.getSocketPath(sessionName);
   }
 
   /**
@@ -85,18 +84,19 @@ class TmuxManager {
       '-c', this.workingDir  // Working directory
     ];
 
-    // If command is provided, run it in a shell that stays open after completion
+    // If command is provided, run it directly so pane dies when command completes
     if (command) {
-      const shell = process.env.SHELL || '/bin/bash';
+      // Run command directly without keeping shell open
+      // This allows pane to die when command completes
       if (Array.isArray(args) && args.length > 0) {
-        // Create a command that runs the specified command then keeps shell open
-        // Use exec to replace the shell process but keep it interactive
-        const fullCommand = `${command} ${args.map(arg => `"${arg}"`).join(' ')}; echo "\\n🔄 Command completed. Shell remains open for interaction."; exec ${shell} -i`;
-        tmuxArgs.push(shell, '-c', fullCommand);
+        tmuxArgs.push(command, ...args);
       } else {
-        const fullCommand = `${command}; echo "\\n🔄 Command completed. Shell remains open for interaction."; exec ${shell} -i`;
-        tmuxArgs.push(shell, '-c', fullCommand);
+        tmuxArgs.push(command);
       }
+    } else {
+      // No command provided, use default shell
+      const shell = process.env.SHELL || '/bin/bash';
+      tmuxArgs.push(shell);
     }
 
     return new Promise((resolve, reject) => {
@@ -190,6 +190,7 @@ class TmuxManager {
     let exitCallbacks = [];
     let lastOutput = '';
     let currentScreenBuffer = '';
+    let commandCompletedDetected = false;
     
     console.log(`🔌 [DEBUG] Starting tmux connection polling for session: ${sessionName}`);
     
@@ -198,7 +199,19 @@ class TmuxManager {
       if (!isActive) return;
       
       try {
-        // Check if session still exists
+        // CRITICAL: Check if socket file still exists
+        if (!fs.existsSync(socketPath)) {
+          console.log(`🔌 [CRITICAL] Socket file deleted for session ${sessionName} - initiating shutdown`);
+          isActive = false;
+          this.activeSessions.delete(sessionName);
+          exitCallbacks.forEach(callback => callback({ exitCode: 0, signal: 'SOCKET_TERMINATED' }));
+          // Trigger full application shutdown
+          console.log('🛑 Socket terminated - shutting down application...');
+          process.exit(0);
+          return;
+        }
+        
+        // Check if session still exists in tmux
         const exists = await this.sessionExists(sessionName, socketPath);
         if (!exists) {
           console.log(`🔌 [DEBUG] Session ${sessionName} no longer exists - terminating`);
@@ -206,7 +219,28 @@ class TmuxManager {
           this.activeSessions.delete(sessionName);
           this.cleanupSocket(socketPath);
           exitCallbacks.forEach(callback => callback({ exitCode: 0, signal: null }));
+          // Trigger application shutdown when session ends
+          console.log('🛑 Tmux session terminated - shutting down application...');
+          process.exit(0);
           return;
+        }
+        
+        // Check if the command has completed (pane is dead)
+        const isPaneDead = await this.isPaneDead(sessionName, socketPath);
+        if (isPaneDead && !commandCompletedDetected) {
+          commandCompletedDetected = true;
+          console.log(`🔌 [DEBUG] Command completed in session ${sessionName} - pane is dead`);
+          // Command completed - trigger shutdown
+          isActive = false;
+          this.activeSessions.delete(sessionName);
+          this.cleanupSocket(socketPath);
+          exitCallbacks.forEach(callback => callback({ exitCode: 0, signal: 'COMMAND_COMPLETED' }));
+          // Trigger full application shutdown
+          console.log('🛑 Command in tmux completed - shutting down application...');
+          process.exit(0);
+          return;
+        } else if (process.env.DEBUG_TMUX) {
+          console.log(`🔌 [DEBUG] Pane status check: dead=${isPaneDead}, session=${sessionName}`);
         }
         
         // Get current session output
@@ -621,24 +655,40 @@ class TmuxManager {
   async cleanup() {
     console.log('🧹 Cleaning up all tmux sessions...');
     
-    const sessions = Array.from(this.activeSessions.keys());
-    for (const sessionName of sessions) {
-      await this.killSession(sessionName);
-    }
-
-    // Clean up any remaining socket files
+    // Set a timeout for cleanup to prevent hanging
+    const cleanupTimeout = setTimeout(() => {
+      console.log('⚠️ Cleanup timeout reached, forcing exit...');
+      process.exit(1);
+    }, 3000); // 3 second timeout for cleanup
+    
     try {
-      if (fs.existsSync(this.socketDir)) {
-        const files = fs.readdirSync(this.socketDir);
-        for (const file of files) {
-          if (file.endsWith('.sock')) {
-            const socketPath = path.join(this.socketDir, file);
-            this.cleanupSocket(socketPath);
-          }
+      const sessions = Array.from(this.activeSessions.keys());
+      
+      // Kill all sessions in parallel with timeout
+      const killPromises = sessions.map(sessionName => {
+        return Promise.race([
+          this.killSession(sessionName).catch(err => {
+            console.error(`Error killing session ${sessionName}:`, err.message);
+          }),
+          new Promise(resolve => setTimeout(resolve, 1000)) // 1 second timeout per session
+        ]);
+      });
+      
+      await Promise.all(killPromises);
+
+      // SecureTempDir will handle cleanup of socket directory
+      // Just clean up any remaining socket files we know about
+      for (const [sessionName, sessionInfo] of this.activeSessions) {
+        try {
+          this.cleanupSocket(sessionInfo.socketPath);
+        } catch (err) {
+          // Ignore cleanup errors during shutdown
         }
       }
     } catch (error) {
-      console.warn(`⚠️  Error during socket cleanup: ${error.message}`);
+      console.error('Error during cleanup:', error);
+    } finally {
+      clearTimeout(cleanupTimeout);
     }
   }
 
@@ -792,6 +842,60 @@ class TmuxManager {
     }
     
     return false;
+  }
+
+  /**
+   * Check if a pane is dead (command has completed)
+   */
+  async isPaneDead(sessionName, socketPath) {
+    return new Promise((resolve) => {
+      const tmux = spawn('tmux', [
+        '-S', socketPath,
+        'list-panes',
+        '-t', sessionName,
+        '-F', '#{pane_dead}'
+      ], { stdio: 'pipe' });
+
+      let output = '';
+      
+      tmux.stdout.on('data', (data) => {
+        output += data.toString();
+      });
+
+      tmux.on('exit', (code) => {
+        if (code === 0) {
+          // Output will be '1' if pane is dead, '0' if alive
+          const isDead = output.trim() === '1';
+          if (isDead) {
+            console.log(`💀 Pane is dead in session ${sessionName}`);
+          }
+          resolve(isDead);
+        } else {
+          // If we can't check pane status, assume it's still alive
+          resolve(false);
+        }
+      });
+
+      tmux.on('error', () => {
+        // On error, assume pane is still alive
+        resolve(false);
+      });
+    });
+  }
+
+  /**
+   * Monitor socket file for deletion
+   */
+  monitorSocketFile(socketPath, callback) {
+    const checkInterval = setInterval(() => {
+      if (!fs.existsSync(socketPath)) {
+        clearInterval(checkInterval);
+        console.log(`🔌 Socket file deleted: ${socketPath}`);
+        callback();
+      }
+    }, 500); // Check every 500ms
+    
+    return checkInterval;
   }
 }
 

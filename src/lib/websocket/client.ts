@@ -13,16 +13,16 @@ class WebSocketClient {
   constructor(url?: string) {
     if (url) {
       this.url = url;
-      console.log('[WebSocket] Using provided URL:', this.url);
+      console.debug('[WebSocket] Using provided URL:', this.url);
     } else if (typeof window !== 'undefined') {
       // Always use the same origin as the current page
       // This ensures all requests go to the same host and port
       this.url = window.location.origin;
-      console.log('[WebSocket] Using same origin:', this.url);
+      console.debug('[WebSocket] Using same origin:', this.url);
     } else {
       // Server-side rendering or testing - will be replaced on client
       this.url = '';
-      console.log('[WebSocket] Server-side rendering - URL will be set on client');
+      console.debug('[WebSocket] Server-side rendering - URL will be set on client');
     }
   }
 
@@ -71,7 +71,7 @@ class WebSocketClient {
         return;
       }
 
-      console.log('[WebSocket] Attempting to connect to:', this.url);
+      console.debug('[WebSocket] Attempting to connect to:', this.url);
       
       this.socket = io(this.url, {
         path: '/api/ws', // Use the /api/ws endpoint for WebSocket
@@ -83,7 +83,7 @@ class WebSocketClient {
       });
 
       // Set up ALL event listeners BEFORE connecting to avoid race conditions
-      console.log('[WebSocket] Setting up event listeners before connection...');
+      console.debug('[WebSocket] Setting up event listeners before connection...');
 
       // Set up message routing FIRST
       this.socket.on('message', (message: WebSocketMessage) => {
@@ -100,13 +100,13 @@ class WebSocketClient {
 
       // CRITICAL: Register terminal-config listener BEFORE connecting
       this.socket.on('terminal-config', (data) => {
-        console.log('[WebSocket] 🔧 TERMINAL-CONFIG EVENT RECEIVED in client.ts:', data);
-        console.log('[WebSocket] 🔧 DEBUG: About to emit terminal-config to listeners, listener count:', this.listeners.get('terminal-config')?.length || 0);
+        console.debug('[WebSocket] 🔧 TERMINAL-CONFIG EVENT RECEIVED in client.ts:', data);
+        console.debug('[WebSocket] 🔧 DEBUG: About to emit terminal-config to listeners, listener count:', this.listeners.get('terminal-config')?.length || 0);
         
         // FIRST: Handle any pending config requests for this session
         const pendingRequest = this.configRequestQueue.get(data.sessionId);
         if (pendingRequest) {
-          console.log('[WebSocket] 🔧 Resolving pending config request for sessionId:', data.sessionId);
+          console.debug('[WebSocket] 🔧 Resolving pending config request for sessionId:', data.sessionId);
           clearTimeout(pendingRequest.timeout);
           pendingRequest.resolve(data);
           this.configRequestQueue.delete(data.sessionId);
@@ -116,7 +116,7 @@ class WebSocketClient {
         const listenerCount = this.listeners.get('terminal-config')?.length || 0;
         if (listenerCount === 0) {
           // No listeners yet - store the config for later delivery
-          console.log('[WebSocket] 🔧 DEBUG: No listeners available, storing terminal-config for sessionId:', data.sessionId);
+          console.debug('[WebSocket] 🔧 DEBUG: No listeners available, storing terminal-config for sessionId:', data.sessionId);
           this.pendingTerminalConfigs.set(data.sessionId, data);
           
           // Start periodic check if not already running
@@ -126,7 +126,7 @@ class WebSocketClient {
           this.emit('terminal-config', data);
         }
         
-        console.log('[WebSocket] 🔧 DEBUG: terminal-config event processed');
+        console.debug('[WebSocket] 🔧 DEBUG: terminal-config event processed');
       });
 
       this.socket.on('terminal-error', (data) => {
@@ -138,7 +138,7 @@ class WebSocketClient {
       });
 
       this.socket.on('session-created', (data) => {
-        console.log('[WebSocket] Received session-created:', data);
+        console.debug('[WebSocket] Received session-created:', data);
         this.emit('session-created', data);
       });
 
@@ -148,14 +148,14 @@ class WebSocketClient {
 
       // Connection event handlers
       this.socket.on('connect', () => {
-        console.log('[WebSocket] Successfully connected! Socket ID:', this.socket?.id);
+        console.debug('[WebSocket] Successfully connected! Socket ID:', this.socket?.id);
         this.isConnecting = false;
         clearTimeout(connectionTimeout);
         resolve();
       });
 
       this.socket.on('disconnect', (reason) => {
-        console.log('[WebSocket] Disconnected:', reason);
+        console.debug('[WebSocket] Disconnected:', reason);
         this.isConnecting = false;
       });
 
@@ -177,7 +177,7 @@ class WebSocketClient {
       }, 5000);
 
       // NOW connect after all listeners are set up
-      console.log('[WebSocket] Event listeners ready, initiating connection...');
+      console.debug('[WebSocket] Event listeners ready, initiating connection...');
       this.socket.connect();
     });
   }
@@ -222,7 +222,7 @@ class WebSocketClient {
         return;
       }
 
-      console.log(`[WebSocket] 🔧 Requesting terminal config with promise for session: ${sessionId}`);
+      console.debug(`[WebSocket] 🔧 Requesting terminal config with promise for session: ${sessionId}`);
       
       // Set up timeout
       const timeout = setTimeout(() => {
@@ -236,7 +236,7 @@ class WebSocketClient {
       // Send the request
       this.socket.emit('request-config', { sessionId });
       
-      console.log(`[WebSocket] 🔧 Config request sent for session: ${sessionId}, timeout: ${timeoutMs}ms`);
+      console.debug(`[WebSocket] 🔧 Config request sent for session: ${sessionId}, timeout: ${timeoutMs}ms`);
     });
   }
 
@@ -255,18 +255,18 @@ class WebSocketClient {
       }
       
       eventListeners.push(callback);
-      console.log(`[WebSocket] 📊 Added listener for ${event} (total: ${eventListeners.length})`);
+      console.debug(`[WebSocket] 📊 Added listener for ${event} (total: ${eventListeners.length})`);
     } else {
-      console.log(`[WebSocket] 📊 Callback already registered for ${event} (total: ${eventListeners.length})`);
+      console.debug(`[WebSocket] 📊 Callback already registered for ${event} (total: ${eventListeners.length})`);
     }
     
     // Special handling for terminal-config: deliver any pending configs for this event
     if (event === 'terminal-config' && this.pendingTerminalConfigs.size > 0) {
-      console.log('[WebSocket] 🔧 DEBUG: terminal-config listener registered, checking for pending configs...', this.pendingTerminalConfigs.size);
+      console.debug('[WebSocket] 🔧 DEBUG: terminal-config listener registered, checking for pending configs...', this.pendingTerminalConfigs.size);
       
       // Deliver all pending terminal configs
       for (const [sessionId, configData] of this.pendingTerminalConfigs.entries()) {
-        console.log('[WebSocket] 🔧 DEBUG: Delivering pending terminal-config for sessionId:', sessionId, configData);
+        console.debug('[WebSocket] 🔧 DEBUG: Delivering pending terminal-config for sessionId:', sessionId, configData);
         // Use setTimeout to ensure the listener is fully registered before calling
         setTimeout(() => {
           callback(configData);
@@ -275,7 +275,7 @@ class WebSocketClient {
       
       // Clear pending configs after delivery
       this.pendingTerminalConfigs.clear();
-      console.log('[WebSocket] 🔧 DEBUG: All pending terminal-configs delivered and cleared');
+      console.debug('[WebSocket] 🔧 DEBUG: All pending terminal-configs delivered and cleared');
     }
   }
 
@@ -291,10 +291,10 @@ class WebSocketClient {
 
   private emit(event: string, data: any): void {
     const eventListeners = this.listeners.get(event);
-    console.log(`[WebSocket] 🔧 DEBUG: emit(${event}) - found ${eventListeners?.length || 0} listeners`);
+    console.debug(`[WebSocket] 🔧 DEBUG: emit(${event}) - found ${eventListeners?.length || 0} listeners`);
     if (eventListeners) {
       eventListeners.forEach((callback, index) => {
-        console.log(`[WebSocket] 🔧 DEBUG: Calling listener ${index} for ${event}`);
+        console.debug(`[WebSocket] 🔧 DEBUG: Calling listener ${index} for ${event}`);
         callback(data);
       });
     } else {
@@ -316,21 +316,21 @@ class WebSocketClient {
       return; // Already running
     }
 
-    console.log('[WebSocket] 🔧 Starting periodic check for pending terminal configs (every 1 second)');
+    console.debug('[WebSocket] 🔧 Starting periodic check for pending terminal configs (every 1 second)');
     this.pendingConfigCheckInterval = setInterval(() => {
       if (this.pendingTerminalConfigs.size === 0) {
-        console.log('[WebSocket] 🔧 Periodic check: No pending configs, stopping interval');
+        console.debug('[WebSocket] 🔧 Periodic check: No pending configs, stopping interval');
         this.stopPendingConfigCheck();
         return;
       }
 
       const terminalConfigListeners = this.listeners.get('terminal-config');
       if (terminalConfigListeners && terminalConfigListeners.length > 0) {
-        console.log('[WebSocket] 🔧 Periodic check: Found terminal-config listeners, delivering pending configs...');
+        console.debug('[WebSocket] 🔧 Periodic check: Found terminal-config listeners, delivering pending configs...');
         
         // Deliver all pending configs
         for (const [sessionId, configData] of this.pendingTerminalConfigs.entries()) {
-          console.log('[WebSocket] 🔧 Periodic delivery: Sending terminal-config for sessionId:', sessionId, configData);
+          console.debug('[WebSocket] 🔧 Periodic delivery: Sending terminal-config for sessionId:', sessionId, configData);
           terminalConfigListeners.forEach(callback => {
             callback(configData);
           });
@@ -339,9 +339,9 @@ class WebSocketClient {
         // Clear pending configs and stop checking
         this.pendingTerminalConfigs.clear();
         this.stopPendingConfigCheck();
-        console.log('[WebSocket] 🔧 Periodic delivery: All configs delivered, stopping interval');
+        console.debug('[WebSocket] 🔧 Periodic delivery: All configs delivered, stopping interval');
       } else {
-        console.log('[WebSocket] 🔧 Periodic check: Still waiting for terminal-config listeners...', this.pendingTerminalConfigs.size, 'pending configs');
+        console.debug('[WebSocket] 🔧 Periodic check: Still waiting for terminal-config listeners...', this.pendingTerminalConfigs.size, 'pending configs');
       }
     }, 1000); // Check every second
   }
@@ -350,7 +350,7 @@ class WebSocketClient {
     if (this.pendingConfigCheckInterval) {
       clearInterval(this.pendingConfigCheckInterval);
       this.pendingConfigCheckInterval = null;
-      console.log('[WebSocket] 🔧 Stopped periodic config check');
+      console.debug('[WebSocket] 🔧 Stopped periodic config check');
     }
   }
 }
