@@ -72,6 +72,9 @@ class TmuxManager {
     }
 
     const socketPath = this.getSocketPath(sessionName);
+
+    // Create output capture file for this session
+    const outputFile = path.join(this.socketDir, `${sessionName}.output`);
     
     // Create tmux session with custom socket and configurable size
     const tmuxArgs = [
@@ -84,15 +87,23 @@ class TmuxManager {
       '-c', this.workingDir  // Working directory
     ];
 
-    // If command is provided, run it directly so pane dies when command completes
+    // If command is provided, wrap it with tee to capture output
     if (command) {
-      // Run command directly without keeping shell open
-      // This allows pane to die when command completes
+      // Create a wrapper script that ensures the pane exits after command completes
+      let fullCommand;
+
       if (Array.isArray(args) && args.length > 0) {
-        tmuxArgs.push(command, ...args);
+        // Escape arguments for shell
+        const escapedArgs = args.map(arg => `'${arg.replace(/'/g, "'\\''")}' `).join('');
+        // Run command, capture only stderr, save exit code, then exit immediately
+        fullCommand = `${command} ${escapedArgs}2> >(tee '${outputFile}' >&2); EXIT_CODE=$?; echo "EXIT_CODE:$EXIT_CODE" >> '${outputFile}'; exit $EXIT_CODE`;
       } else {
-        tmuxArgs.push(command);
+        // Run command, capture only stderr, save exit code, then exit immediately
+        fullCommand = `${command} 2> >(tee '${outputFile}' >&2); EXIT_CODE=$?; echo "EXIT_CODE:$EXIT_CODE" >> '${outputFile}'; exit $EXIT_CODE`;
       }
+
+      // Use bash -c to run the command and ensure it exits
+      tmuxArgs.push('bash', '-c', fullCommand);
     } else {
       // No command provided, use default shell
       const shell = process.env.SHELL || '/bin/bash';
@@ -108,6 +119,8 @@ class TmuxManager {
       if (command) {
         console.log(`🚀 [DEBUG] Command: ${command} ${args.join(' ')}`);
       }
+      
+      console.log(`🔍 [DEBUG] Full tmux command: tmux ${tmuxArgs.join(' ')}`);
 
       const tmux = spawn('tmux', tmuxArgs, {
         stdio: 'pipe',
@@ -139,6 +152,7 @@ class TmuxManager {
           const sessionInfo = {
             name: sessionName,
             socketPath: socketPath,
+            outputFile: command ? outputFile : null,
             created: Date.now(),
             workingDir: this.workingDir,
             command: command,
@@ -203,10 +217,34 @@ class TmuxManager {
         if (!fs.existsSync(socketPath)) {
           console.log(`🔌 [CRITICAL] Socket file deleted for session ${sessionName} - initiating shutdown`);
           isActive = false;
+
+          // Try to read output file before cleanup (server console only)
+          if (sessionInfo && sessionInfo.outputFile && fs.existsSync(sessionInfo.outputFile)) {
+            try {
+              const capturedOutput = fs.readFileSync(sessionInfo.outputFile, 'utf8');
+              console.log('\n📄 [SERVER] Captured command output from file (socket deleted):');
+              console.log('─'.repeat(60));
+              const exitCodeMatch = capturedOutput.match(/EXIT_CODE:(\d+)/m);
+              if (exitCodeMatch) {
+                const exitCode = parseInt(exitCodeMatch[1], 10);
+                const outputWithoutExit = capturedOutput.replace(/\nEXIT_CODE:\d+\s*$/, '');
+                console.log(outputWithoutExit);
+                console.log('─'.repeat(60));
+                console.log(`📊 [SERVER] Command exit code: ${exitCode}`);
+              } else {
+                console.log(capturedOutput);
+                console.log('─'.repeat(60));
+              }
+            } catch (err) {
+              console.error(`[SERVER] Failed to read output file: ${err.message}`);
+            }
+          }
+
           this.activeSessions.delete(sessionName);
+          this.cleanupOutputFile(sessionInfo);
           exitCallbacks.forEach(callback => callback({ exitCode: 0, signal: 'SOCKET_TERMINATED' }));
           // Trigger full application shutdown
-          console.log('🛑 Socket terminated - shutting down application...');
+          console.log('🛑 [SERVER] Socket terminated - shutting down application...');
           process.exit(0);
           return;
         }
@@ -216,31 +254,99 @@ class TmuxManager {
         if (!exists) {
           console.log(`🔌 [DEBUG] Session ${sessionName} no longer exists - terminating`);
           isActive = false;
+
+          // Try to read output file before cleanup (server console only)
+          let exitCode = 0;
+          if (sessionInfo && sessionInfo.outputFile && fs.existsSync(sessionInfo.outputFile)) {
+            try {
+              const capturedOutput = fs.readFileSync(sessionInfo.outputFile, 'utf8');
+              console.log('\n📄 [SERVER] Captured command output from file:');
+              console.log('─'.repeat(60));
+
+              // Extract exit code from file
+              const exitCodeMatch = capturedOutput.match(/EXIT_CODE:(\d+)/m);
+              if (exitCodeMatch) {
+                exitCode = parseInt(exitCodeMatch[1], 10);
+                const outputWithoutExit = capturedOutput.replace(/\nEXIT_CODE:\d+\s*$/, '');
+                console.log(outputWithoutExit);
+              } else {
+                console.log(capturedOutput);
+              }
+
+              console.log('─'.repeat(60));
+              console.log(`📊 [SERVER] Command exit code: ${exitCode}`);
+
+              // Don't send captured output to terminal clients - let terminal close naturally
+            } catch (err) {
+              console.error(`[SERVER] Failed to read output file: ${err.message}`);
+            }
+          } else {
+            console.log(`📊 [SERVER] Command exit code: ${exitCode}`);
+          }
+
           this.activeSessions.delete(sessionName);
           this.cleanupSocket(socketPath);
-          exitCallbacks.forEach(callback => callback({ exitCode: 0, signal: null }));
+          this.cleanupOutputFile(sessionInfo);
+          exitCallbacks.forEach(callback => callback({ exitCode, signal: null }));
           // Trigger application shutdown when session ends
-          console.log('🛑 Tmux session terminated - shutting down application...');
-          process.exit(0);
+          console.log(`🛑 [SERVER] Tmux session terminated - shutting down application with exit code ${exitCode}...`);
+          process.exit(exitCode);
           return;
         }
         
         // Check if the command has completed (pane is dead)
-        const isPaneDead = await this.isPaneDead(sessionName, socketPath);
-        if (isPaneDead && !commandCompletedDetected) {
+        const paneStatus = await this.isPaneDead(sessionName, socketPath);
+        if (paneStatus.isDead && !commandCompletedDetected) {
           commandCompletedDetected = true;
+          let exitCode = paneStatus.exitCode || 0;
           console.log(`🔌 [DEBUG] Command completed in session ${sessionName} - pane is dead`);
+
+          // Read captured output from file if available (server console only)
+          if (sessionInfo && sessionInfo.outputFile) {
+            try {
+              if (fs.existsSync(sessionInfo.outputFile)) {
+                const capturedOutput = fs.readFileSync(sessionInfo.outputFile, 'utf8');
+                console.log('\n📄 [SERVER] Captured command output from file:');
+                console.log('─'.repeat(60));
+
+                // Extract exit code from file (look for EXIT_CODE:N line)
+                const exitCodeMatch = capturedOutput.match(/EXIT_CODE:(\d+)/m);
+                if (exitCodeMatch) {
+                  exitCode = parseInt(exitCodeMatch[1], 10);
+                  // Display output without the EXIT_CODE line in server console
+                  const outputWithoutExit = capturedOutput.replace(/\nEXIT_CODE:\d+\s*$/, '');
+                  console.log(outputWithoutExit);
+                } else {
+                  console.log(capturedOutput);
+                }
+
+                console.log('─'.repeat(60));
+                console.log(`📊 [SERVER] Claude-flow exit code: ${exitCode}`);
+
+                // Don't send captured output to terminal - let it close naturally
+              } else {
+                console.log(`⚠️  [SERVER] Output file not found: ${sessionInfo.outputFile}`);
+              }
+            } catch (err) {
+              console.error(`❌ [SERVER] Failed to read output file: ${err.message}`);
+            }
+          } else {
+            console.log(`📊 [SERVER] Command exit code: ${exitCode}`);
+          }
+
           // Command completed - trigger shutdown
           isActive = false;
           this.activeSessions.delete(sessionName);
           this.cleanupSocket(socketPath);
-          exitCallbacks.forEach(callback => callback({ exitCode: 0, signal: 'COMMAND_COMPLETED' }));
+          this.cleanupOutputFile(sessionInfo);
+          exitCallbacks.forEach(callback => callback({ exitCode, signal: 'COMMAND_COMPLETED' }));
+
           // Trigger full application shutdown
-          console.log('🛑 Command in tmux completed - shutting down application...');
-          process.exit(0);
+          console.log(`🛑 [SERVER] Command in tmux completed with exit code ${exitCode} - shutting down application...`);
+          process.exit(exitCode); // Exit with the actual command exit code
           return;
         } else if (process.env.DEBUG_TMUX) {
-          console.log(`🔌 [DEBUG] Pane status check: dead=${isPaneDead}, session=${sessionName}`);
+          console.log(`🔌 [DEBUG] Pane status check: dead=${paneStatus.isDead}, session=${sessionName}`);
         }
         
         // Get current session output
@@ -643,6 +749,22 @@ class TmuxManager {
   }
 
   /**
+   * Clean up output file
+   */
+  cleanupOutputFile(sessionInfo) {
+    if (!sessionInfo || !sessionInfo.outputFile) return;
+
+    try {
+      if (fs.existsSync(sessionInfo.outputFile)) {
+        fs.unlinkSync(sessionInfo.outputFile);
+        console.log(`🧹 Cleaned up output file: ${sessionInfo.outputFile}`);
+      }
+    } catch (error) {
+      console.warn(`⚠️  Failed to clean up output file ${sessionInfo.outputFile}: ${error.message}`);
+    }
+  }
+
+  /**
    * List all active sessions
    */
   getActiveSessions() {
@@ -677,10 +799,11 @@ class TmuxManager {
       await Promise.all(killPromises);
 
       // SecureTempDir will handle cleanup of socket directory
-      // Just clean up any remaining socket files we know about
+      // Just clean up any remaining socket files and output files we know about
       for (const [sessionName, sessionInfo] of this.activeSessions) {
         try {
           this.cleanupSocket(sessionInfo.socketPath);
+          this.cleanupOutputFile(sessionInfo);
         } catch (err) {
           // Ignore cleanup errors during shutdown
         }
@@ -845,7 +968,7 @@ class TmuxManager {
   }
 
   /**
-   * Check if a pane is dead (command has completed)
+   * Check if a pane is dead (command has completed) and capture exit code
    */
   async isPaneDead(sessionName, socketPath) {
     return new Promise((resolve) => {
@@ -853,32 +976,46 @@ class TmuxManager {
         '-S', socketPath,
         'list-panes',
         '-t', sessionName,
-        '-F', '#{pane_dead}'
+        '-F', '#{pane_dead},#{pane_dead_status}'
       ], { stdio: 'pipe' });
 
       let output = '';
-      
+
       tmux.stdout.on('data', (data) => {
         output += data.toString();
       });
 
       tmux.on('exit', (code) => {
         if (code === 0) {
-          // Output will be '1' if pane is dead, '0' if alive
-          const isDead = output.trim() === '1';
+          // Output will be '1,exitcode' if pane is dead, '0,' if alive
+          const [deadStatus, exitStatus] = output.trim().split(',');
+          const isDead = deadStatus === '1';
+
           if (isDead) {
-            console.log(`💀 Pane is dead in session ${sessionName}`);
+            const exitCode = exitStatus ? parseInt(exitStatus, 10) : 0;
+            console.log(`💀 Pane is dead in session ${sessionName} with exit code: ${exitCode}`);
+
+            // Store exit code in session info
+            const sessionInfo = this.activeSessions.get(sessionName);
+            if (sessionInfo) {
+              sessionInfo.exitCode = exitCode;
+              sessionInfo.commandCompleted = true;
+              sessionInfo.completedAt = Date.now();
+            }
+
+            resolve({ isDead: true, exitCode });
+          } else {
+            resolve({ isDead: false, exitCode: null });
           }
-          resolve(isDead);
         } else {
           // If we can't check pane status, assume it's still alive
-          resolve(false);
+          resolve({ isDead: false, exitCode: null });
         }
       });
 
       tmux.on('error', () => {
         // On error, assume pane is still alive
-        resolve(false);
+        resolve({ isDead: false, exitCode: null });
       });
     });
   }

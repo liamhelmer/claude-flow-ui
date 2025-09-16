@@ -1,0 +1,80 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+        cache-dependency-path: src/package-lock.json
+
+    - name: Install dependencies
+      run: |
+        cd src
+        npm ci
+
+    - name: Run linter
+      run: |
+        cd src
+        npm run lint
+
+    - name: Run tests
+      run: |
+        cd src
+        npm test
+
+    - name: Upload coverage
+      uses: codecov/codecov-action@v3
+      with:
+        directory: ./src/coverage
+        flags: unittests
+        name: codecov-umbrella
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Run security audit
+      run: |
+        cd src
+        npm audit --audit-level=moderate
+
+  build:
+    needs: [test, security]
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Build Docker image
+      run: docker build -t nodejs-hello-world:${{ github.sha }} .
+
+    - name: Run Docker container
+      run: |
+        docker run -d -p 3000:3000 --name test-app nodejs-hello-world:${{ github.sha }}
+        sleep 5
+
+    - name: Test application
+      run: |
+        curl -f http://localhost:3000/health || exit 1
+        curl -f http://localhost:3000 || exit 1
+
+    - name: Stop container
+      run: docker stop test-app

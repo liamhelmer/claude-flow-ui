@@ -1,0 +1,192 @@
+# Artillery Load Testing Configuration
+# Comprehensive load testing for Node.js application
+
+config:
+  target: 'http://localhost:3000'
+  phases:
+    # Warm-up phase
+    - duration: 30
+      arrivalRate: 1
+      name: "Warm-up"
+
+    # Ramp-up phase
+    - duration: 60
+      arrivalRate: 1
+      rampTo: 10
+      name: "Ramp-up"
+
+    # Sustained load phase
+    - duration: 300
+      arrivalRate: 10
+      name: "Sustained load"
+
+    # Peak load phase
+    - duration: 120
+      arrivalRate: 10
+      rampTo: 50
+      name: "Peak load"
+
+    # Cool-down phase
+    - duration: 60
+      arrivalRate: 50
+      rampTo: 1
+      name: "Cool-down"
+
+  # Global configuration
+  timeout: 10
+  defaults:
+    headers:
+      'user-agent': 'Artillery Load Test'
+      'accept': 'application/json'
+
+  # Load testing plugins
+  plugins:
+    expect: {}
+    metrics-by-endpoint: {}
+
+  # Variables for dynamic testing
+  variables:
+    sessionNames:
+      - "load-test-session-1"
+      - "load-test-session-2"
+      - "load-test-session-3"
+      - "load-test-session-4"
+      - "load-test-session-5"
+    commands:
+      - "echo 'Load test command'"
+      - "ls -la"
+      - "pwd"
+      - "whoami"
+      - "date"
+
+scenarios:
+  # Basic HTTP endpoint testing
+  - name: "HTTP Endpoints Load Test"
+    weight: 40
+    flow:
+      - get:
+          url: "/health"
+          expect:
+            - statusCode: 200
+            - hasProperty: "status"
+
+      - get:
+          url: "/api/system"
+          expect:
+            - statusCode: 200
+            - hasProperty: "platform"
+
+      - post:
+          url: "/api/terminals"
+          json:
+            sessionName: "{{ $randomString() }}"
+            command: "bash"
+            cols: 80
+            rows: 24
+          capture:
+            - json: "$.sessionId"
+              as: "sessionId"
+          expect:
+            - statusCode: 201
+            - hasProperty: "success"
+
+      - think: 2
+
+      - delete:
+          url: "/api/terminals/{{ sessionId }}"
+          expect:
+            - statusCode: 200
+
+  # WebSocket connection testing
+  - name: "WebSocket Load Test"
+    weight: 30
+    engine: ws
+    flow:
+      - connect:
+          url: "ws://localhost:3000"
+
+      - send:
+          payload: |
+            {
+              "type": "create-terminal",
+              "data": {
+                "sessionName": "{{ $randomString() }}",
+                "cols": 80,
+                "rows": 24
+              }
+            }
+
+      - think: 1
+
+      - send:
+          payload: |
+            {
+              "type": "terminal-input",
+              "data": {
+                "terminalId": "test-terminal",
+                "data": "{{ $pick(commands) }}\n"
+              }
+            }
+
+      - think: 2
+
+      - send:
+          payload: |
+            {
+              "type": "terminal-resize",
+              "data": {
+                "terminalId": "test-terminal",
+                "cols": 100,
+                "rows": 30
+              }
+            }
+
+  # Mixed load testing
+  - name: "Mixed Protocol Load Test"
+    weight: 20
+    flow:
+      # HTTP health check
+      - get:
+          url: "/health"
+
+      # Create terminal via API
+      - post:
+          url: "/api/terminals"
+          json:
+            sessionName: "mixed-{{ $randomString() }}"
+            command: "{{ $pick(commands) }}"
+          capture:
+            - json: "$.sessionId"
+              as: "sessionId"
+
+      - think: 1
+
+      # Execute command via API
+      - post:
+          url: "/api/command"
+          json:
+            sessionId: "{{ sessionId }}"
+            command: "{{ $pick(commands) }}"
+
+      - think: 2
+
+      # Clean up
+      - delete:
+          url: "/api/terminals/{{ sessionId }}"
+
+  # Stress testing scenario
+  - name: "Stress Test"
+    weight: 10
+    flow:
+      # Rapid fire requests
+      - loop:
+          - get:
+              url: "/health"
+          - get:
+              url: "/api/system"
+          - post:
+              url: "/api/terminals"
+              json:
+                sessionName: "stress-{{ $randomString() }}"
+                command: "echo 'stress test'"
+        count: 10

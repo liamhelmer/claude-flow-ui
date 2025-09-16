@@ -1,0 +1,415 @@
+# GitHub Actions CI/CD Pipeline
+# Comprehensive testing workflow for Node.js application
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+
+env:
+  NODE_VERSION: '18'
+  COVERAGE_THRESHOLD: 90
+
+jobs:
+  # Code Quality Checks
+  code-quality:
+    name: Code Quality
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run linting
+      run: npm run lint
+
+    - name: Run type checking
+      run: npm run type-check
+
+    - name: Check formatting
+      run: npx prettier --check .
+      continue-on-error: true
+
+  # Unit Tests
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: code-quality
+
+    strategy:
+      matrix:
+        node-version: [18, 20, 22]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run unit tests
+      run: npm run test:ci -- --testPathPattern="tests/unit"
+      env:
+        NODE_ENV: test
+
+    - name: Upload coverage reports
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage/lcov.info
+        flags: unit-tests
+        name: codecov-unit-${{ matrix.node-version }}
+
+  # Integration Tests
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: unit-tests
+
+    services:
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Start application
+      run: |
+        npm run server:dev &
+        sleep 10
+        curl -f http://localhost:3000/health || exit 1
+      env:
+        NODE_ENV: test
+        PORT: 3000
+
+    - name: Run integration tests
+      run: npm test -- --testPathPattern="tests/integration"
+      env:
+        NODE_ENV: test
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: integration-test-results
+        path: test-results/
+
+  # Security Tests
+  security-tests:
+    name: Security Tests
+    runs-on: ubuntu-latest
+    needs: code-quality
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run npm audit
+      run: npm audit --audit-level=moderate
+      continue-on-error: true
+
+    - name: Run security tests
+      run: |
+        npm run server:dev &
+        sleep 10
+        npm test -- --testPathPattern="tests/security"
+      env:
+        NODE_ENV: test
+
+    - name: Run Snyk security scan
+      uses: snyk/actions/node@master
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      with:
+        args: --severity-threshold=high
+      continue-on-error: true
+
+  # End-to-End Tests
+  e2e-tests:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    needs: integration-tests
+
+    strategy:
+      matrix:
+        browser: [chromium, firefox, webkit]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Install Playwright browsers
+      run: npx playwright install --with-deps ${{ matrix.browser }}
+
+    - name: Start application
+      run: |
+        npm run build
+        npm run start &
+        sleep 15
+        curl -f http://localhost:3000 || exit 1
+      env:
+        NODE_ENV: production
+        PORT: 3000
+
+    - name: Run E2E tests
+      run: npx playwright test --project=${{ matrix.browser }}
+      env:
+        CI: true
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: e2e-results-${{ matrix.browser }}
+        path: test-results/
+
+    - name: Upload screenshots
+      uses: actions/upload-artifact@v4
+      if: failure()
+      with:
+        name: e2e-screenshots-${{ matrix.browser }}
+        path: test-results/**/*.png
+
+  # Load Tests
+  load-tests:
+    name: Load Tests
+    runs-on: ubuntu-latest
+    needs: integration-tests
+    if: github.event_name == 'schedule' || contains(github.event.head_commit.message, '[load-test]')
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Install Artillery
+      run: npm install -g artillery@latest
+
+    - name: Start application
+      run: |
+        npm run build
+        npm run start &
+        sleep 15
+      env:
+        NODE_ENV: production
+        PORT: 3000
+
+    - name: Run load tests
+      run: |
+        cd tests/load
+        node load-test.js
+      env:
+        TARGET_URL: http://localhost:3000
+        DURATION: 60
+        CONCURRENCY: 10
+
+    - name: Upload load test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: load-test-results
+        path: tests/load/load-test-reports/
+
+  # Build and Deploy
+  build-deploy:
+    name: Build and Deploy
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests, security-tests]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Build application
+      run: npm run build:static
+      env:
+        NODE_ENV: production
+
+    - name: Run build verification
+      run: npm run build:verify
+
+    - name: Create deployment package
+      run: |
+        tar -czf deployment-package.tar.gz \
+          --exclude=node_modules \
+          --exclude=.git \
+          --exclude=tests \
+          --exclude=coverage \
+          .
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-artifacts
+        path: |
+          .next/
+          out/
+          deployment-package.tar.gz
+
+    # Uncomment and configure for actual deployment
+    # - name: Deploy to staging
+    #   if: github.ref == 'refs/heads/develop'
+    #   run: echo "Deploy to staging"
+    #
+    # - name: Deploy to production
+    #   if: github.ref == 'refs/heads/main'
+    #   run: echo "Deploy to production"
+
+  # Coverage Report
+  coverage-report:
+    name: Coverage Report
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Generate coverage report
+      run: npm run test:coverage
+      env:
+        NODE_ENV: test
+
+    - name: Check coverage threshold
+      run: |
+        COVERAGE=$(node -e "
+          const fs = require('fs');
+          const coverage = JSON.parse(fs.readFileSync('coverage/coverage-summary.json'));
+          const total = coverage.total;
+          console.log(Math.min(total.lines.pct, total.statements.pct, total.functions.pct, total.branches.pct));
+        ")
+        echo "Coverage: ${COVERAGE}%"
+        if (( $(echo "$COVERAGE >= ${{ env.COVERAGE_THRESHOLD }}" | bc -l) )); then
+          echo "✅ Coverage threshold met"
+        else
+          echo "❌ Coverage below threshold"
+          exit 1
+        fi
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage/lcov.info
+        flags: comprehensive
+        name: codecov-comprehensive
+
+    - name: Comment coverage on PR
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const coverage = JSON.parse(fs.readFileSync('coverage/coverage-summary.json'));
+          const total = coverage.total;
+
+          const comment = `## 📊 Coverage Report
+
+          | Metric | Percentage | Status |
+          |--------|------------|--------|
+          | Lines | ${total.lines.pct}% | ${total.lines.pct >= 90 ? '✅' : '❌'} |
+          | Statements | ${total.statements.pct}% | ${total.statements.pct >= 90 ? '✅' : '❌'} |
+          | Functions | ${total.functions.pct}% | ${total.functions.pct >= 90 ? '✅' : '❌'} |
+          | Branches | ${total.branches.pct}% | ${total.branches.pct >= 90 ? '✅' : '❌'} |
+
+          **Overall Coverage:** ${Math.min(total.lines.pct, total.statements.pct, total.functions.pct, total.branches.pct)}%
+          `;
+
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
+
+  # Cleanup
+  cleanup:
+    name: Cleanup
+    runs-on: ubuntu-latest
+    needs: [build-deploy, coverage-report]
+    if: always()
+
+    steps:
+    - name: Cleanup artifacts
+      run: echo "Cleaning up temporary artifacts"
