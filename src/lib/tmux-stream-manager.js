@@ -218,9 +218,14 @@ class TmuxStreamManager {
           console.error('Error during cleanup:', err);
         });
         
-        // Trigger application shutdown
+        // Trigger graceful application shutdown
         console.log('🛑 Socket terminated - shutting down application...');
-        process.exit(0);
+
+        // Store exit code for the shutdown handler to use
+        process.exitCode = 0;
+
+        // Trigger graceful shutdown via SIGTERM
+        process.kill(process.pid, 'SIGTERM');
         return;
       }
       
@@ -295,9 +300,14 @@ class TmuxStreamManager {
             console.error('Error during cleanup:', err);
           });
 
-          // Trigger application shutdown
+          // Trigger graceful application shutdown
           console.log(`🛑 [SERVER] Command completed with exit code ${exitCode} - shutting down application...`);
-          process.exit(exitCode);
+
+          // Store exit code for the shutdown handler to use
+          process.exitCode = exitCode;
+
+          // Trigger graceful shutdown via SIGTERM
+          process.kill(process.pid, 'SIGTERM');
           return;
         }
 
@@ -426,9 +436,14 @@ class TmuxStreamManager {
               console.error('Error during cleanup:', err);
             });
 
-            // Exit with the actual command exit code
+            // Trigger graceful shutdown with the actual command exit code
             console.log(`🛑 [SERVER] Command completed with exit code ${exitCode} - shutting down application...`);
-            process.exit(exitCode);
+
+            // Store exit code for the shutdown handler to use
+            process.exitCode = exitCode;
+
+            // Trigger graceful shutdown via SIGTERM
+            process.kill(process.pid, 'SIGTERM');
             return;
           }
 
@@ -453,8 +468,9 @@ class TmuxStreamManager {
             console.error('Error during cleanup:', err);
           });
 
-          // Exit the process immediately
-          process.exit(1);
+          // Trigger graceful shutdown with error code
+          process.exitCode = 1;
+          process.kill(process.pid, 'SIGTERM');
           return;
         }
         
