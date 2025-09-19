@@ -1,0 +1,84 @@
+ReferenceError: expect is not defined
+
+   at config/setup.reliable.js:6
+
+  4 |  */
+  5 |
+> 6 | import '@testing-library/jest-dom';
+    | ^
+  7 | import 'jest-axe/extend-expect';
+  8 |
+  9 | // ============================================================================
+    at Object.<anonymous> (/Users/liam.helmer/repos/liamhelmer/claude-flow-ui/node_modules/@testing-library/jest-dom/dist/index.js:11:1)
+    at Object.<anonymous> (/Users/liam.helmer/repos/liamhelmer/claude-flow-ui/tests/config/setup.reliable.js:6:1)
+    at Object.<anonymous> (/Users/liam.helmer/repos/liamhelmer/claude-flow-ui/tests/regression/initial-terminal-input.test.js:15:1)
+ReferenceError: describe is not defined
+
+   at regression/production-initial-terminal.test.js:22
+
+  20 | const projectRoot = path.resolve(__dirname, '../..');
+  21 |
+> 22 | describe('Production Initial Terminal Regression', () => {
+     | ^
+  23 |   let originalEnv;
+  24 |   let mockWebSocket;
+  25 |   let terminalState;
+    at Object.<anonymous> (/Users/liam.helmer/repos/liamhelmer/claude-flow-ui/tests/regression/production-initial-terminal.test.js:22:1)
+Error: Do not import `@jest/globals` outside of the Jest test environment
+
+   at regression/production-terminal-issues.test.js:14
+
+  12 | import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+  13 | import userEvent from '@testing-library/user-event';
+> 14 | import { jest } from '@jest/globals';
+     | ^
+  15 |
+  16 | // Import production environment setup
+  17 | import './production-environment-setup.js';
+    at /Users/liam.helmer/repos/liamhelmer/claude-flow-ui/node_modules/@jest/globals/build/index.js:23:7
+    at Object.<anonymous> (/Users/liam.helmer/repos/liamhelmer/claude-flow-ui/node_modules/@jest/globals/build/index.js:25:12)
+    at Object.<anonymous> (/Users/liam.helmer/repos/liamhelmer/claude-flow-ui/tests/regression/production-terminal-issues.test.js:14:1)
+ReferenceError: describe is not defined
+
+   at regression/simple-initial-terminal-regression.test.js:14
+
+  12 |  */
+  13 |
+> 14 | describe('Initial Terminal Input Display Regression', () => {
+     | ^
+  15 |   let originalEnv;
+  16 |
+  17 |   beforeAll(() => {
+    at Object.<anonymous> (/Users/liam.helmer/repos/liamhelmer/claude-flow-ui/tests/regression/simple-initial-terminal-regression.test.js:14:1)
+SyntaxError: /Users/liam.helmer/repos/liamhelmer/claude-flow-ui/tests/regression/terminal-config-regression.test.ts: Unexpected token, expected "," (94:23)
+
+  92 |   describe('Terminal Data Handling Regression', () => {
+  93 |     test('should still handle terminal data correctly after config fix', async () => {
+> 94 |       render(<Terminal sessionId="test-session" />);
+     |                        ^
+  95 |
+  96 |       // Verify config is displayed
+  97 |       expect(screen.getByText('80×24')).toBeInTheDocument();
+
+   at regression/terminal-config-regression.test.ts:94
+
+  92 |   describe('Terminal Data Handling Regression', () => {
+  93 |     test('should still handle terminal data correctly after config fix', async () => {
+> 94 |       render(<Terminal sessionId="test-session" />);
+     |                       ^
+  95 |
+  96 |       // Verify config is displayed
+  97 |       expect(screen.getByText('80×24')).toBeInTheDocument();
+ReferenceError: describe is not defined
+
+   at regression/tmux-regression.test.ts:10
+
+   8 |  * Regression tests to ensure tmux integration changes don't break existing functionality
+   9 |  */
+> 10 | describe('Tmux Regression Tests', () => {
+     | ^
+  11 |   let sessionManager: TmuxSessionManager;
+  12 |   const regressionDataPath = path.join(__dirname, '../fixtures/regression-data');
+  13 |
+    at Object.<anonymous> (/Users/liam.helmer/repos/liamhelmer/claude-flow-ui/tests/regression/tmux-regression.test.ts:10:1)
+
