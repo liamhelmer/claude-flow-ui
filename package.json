@@ -1,6 +1,6 @@
 {
   "name": "@liamhelmer/claude-flow-ui",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "A modern web-based terminal and monitoring interface for Claude Flow with real-time system monitoring and tmux integration",
   "author": "Liam Helmer <liam@liamhelmer.com>",
   "license": "MIT",
@@ -107,7 +107,7 @@
     "@xterm/addon-webgl": "^0.18.0",
     "@xterm/xterm": "^5.5.0",
     "autoprefixer": "^10.4.20",
-    "claude-flow": "^2.0.0-alpha.112",
+    "claude-flow": "^2.0.0-alpha.113",
     "clsx": "^2.1.1",
     "cors": "^2.8.5",
     "express": "^5.1.0",
