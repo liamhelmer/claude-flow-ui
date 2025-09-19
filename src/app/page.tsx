@@ -1,23 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import dynamic from 'next/dynamic';
-import { useAppStore } from '@/lib/state/store';
+import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useAppStore, initializeSidebarForViewport } from '@/lib/state/store';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { useTerminal } from '@/hooks/useTerminal';
-import Sidebar from '@/components/sidebar/Sidebar';
+import TerminalSidebar from '@/components/sidebar/TerminalSidebar';
+import Terminal from '@/components/terminal/Terminal';
 import { cn } from '@/lib/utils';
 import type { TerminalSession } from '@/types';
-
-// Dynamically import Terminal to avoid SSR issues
-const Terminal = dynamic(() => import('@/components/terminal/Terminal'), {
-  ssr: false,
-  loading: () => (
-    <div className="h-full flex items-center justify-center">
-      <div className="animate-pulse text-gray-400">Loading terminal...</div>
-    </div>
-  ),
-});
 
 export default function HomePage() {
   const {
@@ -31,43 +21,136 @@ export default function HomePage() {
     addSession,
     removeSession,
     updateSession,
+    setLoading,
+    setError,
   } = useAppStore();
 
-  const { connected, connecting, createSession, destroySession, on, off } = useWebSocket();
-  const [isCreatingSession, setIsCreatingSession] = useState(false);
+  const { connected, connecting, createSession, destroySession, switchSession, on, off } = useWebSocket();
 
-  // Get terminal controls for the active session
-  const {
-    focusTerminal,
-    fitTerminal,
-    scrollToBottom,
-    scrollToTop,
-    refreshTerminal,
-    isAtBottom,
-    hasNewOutput,
-    backendTerminalConfig,
-  } = useTerminal({
-    sessionId: activeSessionId || '',
-  });
+  // REMOVED: Don't create a separate terminal instance here
+  // The Terminal component will handle its own instance
+  // This prevents duplicate terminal spawning and listener registration
 
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [initialSessionFetched, setInitialSessionFetched] = useState(false);
+  const [pendingSessionId, setPendingSessionId] = useState<string | null>(null);
+  const [connectionRetries, setConnectionRetries] = useState(0);
+  const [hasEverConnected, setHasEverConnected] = useState(false);
+  const maxRetries = 3;
 
-  // Handle refresh with loading state
-  const handleRefresh = () => {
-    setIsRefreshing(true);
-    refreshTerminal();
-    // Reset refreshing state after a delay
-    setTimeout(() => setIsRefreshing(false), 1000);
-  };
+  // REMOVED: Refresh is handled by the Terminal component
+  // No need for duplicate refresh handling here
 
-  // Debug connection state
+  // Track connection state and whether we've ever connected
   useEffect(() => {
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[HomePage] Connection state:', { connected, connecting });
+    if (connected && !hasEverConnected) {
+      setHasEverConnected(true);
     }
-  }, [connected, connecting]);
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[HomePage] Connection state:', { connected, connecting, hasEverConnected });
+    }
+  }, [connected, connecting, hasEverConnected]);
 
-  // Handle the single terminal session
+  // Memoized fetch function to prevent recreation on every render
+  const fetchInitialSession = useCallback(async () => {
+    try {
+      console.log('[HomePage] fetchInitialSession called - starting fetch from /api/terminals');
+      setLoading(true);
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+
+      const response = await fetch('/api/terminals', {
+        signal: controller.signal,
+        headers: {
+          'Cache-Control': 'no-cache',
+        },
+      });
+
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        const terminals = await response.json();
+        if (terminals && terminals.length > 0) {
+          const mainTerminal = terminals[0];
+          console.log('[HomePage] Found initial terminal:', mainTerminal.id);
+          // Set pending session ID immediately for Terminal to use
+          setPendingSessionId(mainTerminal.id);
+          const mainSession: TerminalSession = {
+            id: mainTerminal.id,
+            name: mainTerminal.name || 'Claude Flow Terminal',
+            isActive: true,
+            lastActivity: new Date(mainTerminal.createdAt),
+          };
+          addSession(mainSession);
+          setActiveSession(mainTerminal.id);
+          setInitialSessionFetched(true);
+
+          // INITIAL TERMINAL FIX: Ensure WebSocket connection before setting session
+          // This prevents race conditions with terminal data handling
+          // Only switch if not already on this session
+          if (connected && activeSessionId !== mainTerminal.id) {
+            console.debug('[HomePage] WebSocket already connected, switching to terminal session');
+            switchSession(mainTerminal.id);
+          } else if (!connected) {
+            console.debug('[HomePage] WebSocket not ready, session will be switched on connection');
+          }
+          setConnectionRetries(0); // Reset retries on success
+        } else {
+          console.log('[HomePage] No terminals found, waiting for server to create one...');
+          setInitialSessionFetched(true); // Don't keep retrying if no terminals
+        }
+      } else {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+    } catch (error) {
+      console.error('[HomePage] Failed to fetch initial terminals:', error);
+
+      if (connectionRetries < maxRetries) {
+        setConnectionRetries(prev => prev + 1);
+        console.log(`[HomePage] Retrying connection (${connectionRetries + 1}/${maxRetries})...`);
+        // Exponential backoff: 1s, 2s, 4s
+        setTimeout(() => {
+          if (!initialSessionFetched) {
+            fetchInitialSession();
+          }
+        }, Math.pow(2, connectionRetries) * 1000);
+      } else {
+        setError('Failed to connect to terminal server. Please refresh the page.');
+        setInitialSessionFetched(true);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [initialSessionFetched, addSession, setActiveSession, connectionRetries, setLoading, setError, activeSessionId, connected, switchSession]);
+
+  // Fetch initial terminal session from API immediately on mount
+  useEffect(() => {
+    console.log('[HomePage] useEffect for fetchInitialSession:', { initialSessionFetched });
+    if (!initialSessionFetched) {
+      console.log('[HomePage] Calling fetchInitialSession immediately...');
+      // Call immediately without waiting
+      fetchInitialSession();
+    } else {
+      console.log('[HomePage] Skipping fetchInitialSession - already fetched');
+    }
+    // Run only once on mount
+  }, []); // Empty deps to run immediately on mount
+
+  // Initialize sidebar state based on viewport size
+  useEffect(() => {
+    initializeSidebarForViewport();
+
+    // Handle window resize
+    const handleResize = () => {
+      initializeSidebarForViewport();
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Handle WebSocket terminal events
   useEffect(() => {
     const handleSessionCreated = (data: { sessionId: string }) => {
       if (process.env.NODE_ENV === 'development') {
@@ -84,8 +167,25 @@ export default function HomePage() {
       if (terminalSessions.length === 0) {
         addSession(mainSession);
       }
-      setActiveSession(data.sessionId);
-      setIsCreatingSession(false);
+      // INITIAL TERMINAL FIX: Synchronize session IDs to prevent race conditions
+      console.debug('[HomePage] Session created, synchronizing with API session if needed');
+
+      // If we already have a session from API, ensure they match
+      if (terminalSessions.length > 0) {
+        const existingSession = terminalSessions[0];
+        if (existingSession.id !== data.sessionId) {
+          console.debug('[HomePage] Updating session ID to match WebSocket:', data.sessionId);
+          // Update the existing session to use the WebSocket session ID
+          updateSession(existingSession.id, { id: data.sessionId });
+        }
+      }
+
+      // Only switch if we're not already on this session
+      if (activeSessionId !== data.sessionId) {
+        // Notify backend about the session switch
+        switchSession(data.sessionId);
+        setActiveSession(data.sessionId);
+      }
     };
 
     const handleSessionDestroyed = (data: { 
@@ -110,55 +210,116 @@ export default function HomePage() {
       }
     };
 
+    // Handle terminal events
+    const handleTerminalSpawned = (data: { id: string; name: string; command: string; createdAt: string }) => {
+      const newSession: TerminalSession = {
+        id: data.id,
+        name: data.name,
+        isActive: false,
+        lastActivity: new Date(data.createdAt),
+      };
+      addSession(newSession);
+      // Automatically switch to newly spawned terminal
+      if (activeSessionId !== data.id) {
+        switchSession(data.id);
+        setActiveSession(data.id);
+      }
+      console.log('[HomePage] Terminal spawned and activated:', data.id);
+    };
+
+    const handleTerminalClosed = (data: { id: string }) => {
+      removeSession(data.id);
+      console.log('[HomePage] Terminal closed:', data.id);
+    };
+
     on('session-created', handleSessionCreated);
     on('session-destroyed', handleSessionDestroyed);
-    
+    on('terminal-spawned', handleTerminalSpawned);
+    on('terminal-closed', handleTerminalClosed);
+
     return () => {
       off('session-created', handleSessionCreated);
       off('session-destroyed', handleSessionDestroyed);
+      off('terminal-spawned', handleTerminalSpawned);
+      off('terminal-closed', handleTerminalClosed);
     };
-  }, [on, off, addSession, setActiveSession, removeSession, terminalSessions.length]);
+    // Remove terminalSessions.length from dependencies to prevent re-registration
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [on, off, addSession, setActiveSession, removeSession, switchSession, activeSessionId, updateSession]);
 
-  // Initialize with the main session when connected
-  useEffect(() => {
-    if (terminalSessions.length === 0 && connected && !isCreatingSession) {
-      if (process.env.NODE_ENV === 'development') {
-        console.log('[HomePage] Requesting main session...');
-      }
-      setIsCreatingSession(true);
-      createSession();
+  // The main session is created by the server on startup, no need to request it
+  // We just wait for the session-created event which the server sends automatically
+
+  // Handle terminal session selection with coordinated state updates
+  const handleSessionSelect = useCallback(async (sessionId: string) => {
+    console.debug('[HomePage] 🔄 Switching to session:', sessionId);
+
+    try {
+      // 1. Update local state first to prevent race conditions
+      setActiveSession(sessionId);
+
+      // 2. Notify backend about session switch
+      switchSession(sessionId);
+
+      console.debug('[HomePage] ✅ Session switch completed:', sessionId);
+    } catch (error) {
+      console.error('[HomePage] ❌ Failed to switch session:', error);
     }
-  }, [connected, terminalSessions.length, isCreatingSession, createSession]);
+  }, [switchSession, setActiveSession]);
 
-  // Single terminal - no need for session management
-  const handleSessionSelect = (sessionId: string) => {
-    // Only one session, always active
-    setActiveSession(sessionId);
-  };
+  const handleSessionClose = async (sessionId: string) => {
+    // Handle closing terminals (except the main one which is handled by the backend)
+    try {
+      const response = await fetch(`/api/terminals/${sessionId}`, {
+        method: 'DELETE'
+      });
 
-  const handleSessionClose = (sessionId: string) => {
-    // Cannot close the main terminal - it's managed by the process
-    if (process.env.NODE_ENV === 'development') {
-      console.log('Terminal lifecycle managed by claude-flow process');
+      if (response.ok) {
+        removeSession(sessionId);
+
+        // If this was the active session, switch to another
+        if (sessionId === activeSessionId) {
+          const remaining = terminalSessions.filter(s => s.id !== sessionId);
+          if (remaining.length > 0) {
+            setActiveSession(remaining[0].id);
+          }
+        }
+      } else {
+        const error = await response.json();
+        console.error('Failed to close terminal:', error);
+      }
+    } catch (error) {
+      console.error('Error closing terminal:', error);
     }
   };
 
   const handleNewSession = () => {
-    // Only one terminal allowed
+    // This is now handled by the TerminalSidebar component
     if (process.env.NODE_ENV === 'development') {
-      console.log('Only one terminal per claude-flow process');
+      console.log('New terminal creation handled by sidebar');
     }
   };
 
-  // Show loading state
-  if (loading || connecting) {
+  // Show loading state only while initially loading, not while connecting
+  // WebSocket connection happens after terminal is ready
+  if (loading) {
     return (
-      <div className="h-full flex items-center justify-center bg-background text-foreground">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
-          <p className="text-sm text-gray-400">
-            {connecting ? 'Connecting to terminal server...' : 'Loading...'}
-          </p>
+      <div className="h-full flex bg-background text-foreground">
+        {/* Always show sidebar */}
+        <TerminalSidebar
+          isOpen={sidebarOpen}
+          onToggle={toggleSidebar}
+          activeSessionId={activeSessionId}
+          onSessionSelect={handleSessionSelect}
+          onSessionClose={handleSessionClose}
+        />
+
+        {/* Loading content */}
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
+            <p className="text-sm text-gray-400">Loading...</p>
+          </div>
         </div>
       </div>
     );
@@ -167,40 +328,65 @@ export default function HomePage() {
   // Show error state
   if (error) {
     return (
-      <div className="h-full flex items-center justify-center bg-background text-foreground">
-        <div className="text-center max-w-md">
-          <div className="text-red-500 mb-4">
-            <svg className="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.732-.833-2.464 0L4.35 16.5c-.77.833.192 2.5 1.732 2.5z" />
-            </svg>
+      <div className="h-full flex bg-background text-foreground">
+        {/* Always show sidebar */}
+        <TerminalSidebar
+          isOpen={sidebarOpen}
+          onToggle={toggleSidebar}
+          activeSessionId={activeSessionId}
+          onSessionSelect={handleSessionSelect}
+          onSessionClose={handleSessionClose}
+        />
+
+        {/* Error content */}
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center max-w-md">
+            <div className="text-red-500 mb-4">
+              <svg className="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.732-.833-2.464 0L4.35 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              </svg>
+            </div>
+            <h2 className="text-xl font-semibold mb-2">Connection Error</h2>
+            <p className="text-sm text-gray-400 mb-4">{error}</p>
+            <button
+              onClick={() => window.location.reload()}
+              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+            >
+              Retry
+            </button>
           </div>
-          <h2 className="text-xl font-semibold mb-2">Connection Error</h2>
-          <p className="text-sm text-gray-400 mb-4">{error}</p>
-          <button
-            onClick={() => window.location.reload()}
-            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
-          >
-            Retry
-          </button>
         </div>
       </div>
     );
   }
 
-  // Show disconnected state
-  if (!connected) {
+  // Only show disconnected state if we HAD a connection and lost it
+  // In production mode with command-line args, activeSessionId may be set before WebSocket connects
+  if (!connected && hasEverConnected && activeSessionId) {
     return (
-      <div className="h-full flex items-center justify-center bg-background text-foreground">
-        <div className="text-center">
-          <div className="text-yellow-500 mb-4">
-            <svg className="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
+      <div className="h-full flex bg-background text-foreground">
+        {/* Always show sidebar */}
+        <TerminalSidebar
+          isOpen={sidebarOpen}
+          onToggle={toggleSidebar}
+          activeSessionId={activeSessionId}
+          onSessionSelect={handleSessionSelect}
+          onSessionClose={handleSessionClose}
+        />
+
+        {/* Disconnected content */}
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <div className="text-yellow-500 mb-4">
+              <svg className="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <h2 className="text-xl font-semibold mb-2">Disconnected</h2>
+            <p className="text-sm text-gray-400">
+              Connection to terminal server was lost
+            </p>
           </div>
-          <h2 className="text-xl font-semibold mb-2">Disconnected</h2>
-          <p className="text-sm text-gray-400">
-            Unable to connect to terminal server
-          </p>
         </div>
       </div>
     );
@@ -208,38 +394,34 @@ export default function HomePage() {
 
   return (
     <div className="h-full flex bg-background text-foreground">
-      {/* Left Sidebar */}
-      <Sidebar
+      {/* Left Sidebar - Terminal List */}
+      <TerminalSidebar
         isOpen={sidebarOpen}
         onToggle={toggleSidebar}
-        sessions={terminalSessions}
         activeSessionId={activeSessionId}
         onSessionSelect={handleSessionSelect}
-        onSessionCreate={handleNewSession}
         onSessionClose={handleSessionClose}
-        terminalControls={activeSessionId ? {
-          onRefresh: handleRefresh,
-          onScrollToTop: scrollToTop,
-          onScrollToBottom: scrollToBottom,
-          isAtBottom,
-          hasNewOutput,
-          isRefreshing,
-          terminalConfig: backendTerminalConfig,
-        } : undefined}
       />
 
       {/* Main Content */}
       <div className="flex-1 flex min-w-0">
         {/* Terminal Area - no tabs needed for single terminal */}
         <div className="flex-1 relative">
-          {activeSessionId ? (
-            <Terminal
-              key={activeSessionId}
-              sessionId={activeSessionId}
-              className="h-full"
-            />
-          ) : (
-            <div className="h-full flex items-center justify-center text-gray-400">
+          {/* Always render Terminal component to avoid unmounting */}
+          {(() => {
+            // Use pendingSessionId if activeSessionId not yet set
+            const sessionToUse = activeSessionId || pendingSessionId || '';
+            console.log('[HomePage] 🔧 Rendering Terminal with sessionId:', sessionToUse);
+            return (
+              <Terminal
+                sessionId={sessionToUse}
+                className="h-full"
+              />
+            );
+          })()}
+          {/* Show overlay when no session */}
+          {!activeSessionId && (
+            <div className="absolute inset-0 h-full flex items-center justify-center text-gray-400 bg-background z-10">
               <div className="text-center">
                 <svg className="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />

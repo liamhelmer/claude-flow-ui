@@ -1,6 +1,8 @@
 import { create } from 'zustand';
-import { devtools } from 'zustand/middleware';
+import { devtools, subscribeWithSelector } from 'zustand/middleware';
 import type { AppState, TerminalSession } from '@/types';
+
+// Enhanced store with performance optimizations and better selectors
 
 interface AppActions {
   setSidebarOpen: (open: boolean) => void;
@@ -13,6 +15,7 @@ interface AppActions {
   setError: (error: string | null) => void;
   createNewSession: () => string;
   clearSessions: () => void;
+  batchUpdate: (updates: Partial<AppState>) => void;
 }
 
 type Store = AppState & AppActions;
@@ -21,11 +24,11 @@ const generateSessionId = () => `session-${Date.now()}-${Math.random().toString(
 
 export const useAppStore = create<Store>()(
   devtools(
-    (set, get) => ({
+    subscribeWithSelector((set, get) => ({
       // Initial state
       terminalSessions: [],
       activeSessionId: null,
-      sidebarOpen: true,
+      sidebarOpen: true, // Start with sidebar open for better UX
       loading: false,
       error: null,
 
@@ -106,9 +109,75 @@ export const useAppStore = create<Store>()(
           false,
           'clearSessions'
         ),
-    }),
+
+      batchUpdate: (updates: Partial<AppState>) =>
+        set(
+          (state) => ({ ...state, ...updates }),
+          false,
+          'batchUpdate'
+        ),
+    })),
     {
       name: 'claude-flow-store',
     }
   )
 );
+
+// Optimized selectors to prevent unnecessary re-renders
+export const useTerminalSessions = () => useAppStore(state => state.terminalSessions);
+export const useActiveSession = () => useAppStore(state =>
+  state.terminalSessions.find(s => s.id === state.activeSessionId)
+);
+export const useActiveSessionId = () => useAppStore(state => state.activeSessionId);
+export const useSidebarOpen = () => useAppStore(state => state.sidebarOpen);
+export const useAppError = () => useAppStore(state => state.error);
+export const useAppLoading = () => useAppStore(state => state.loading);
+
+// Computed selectors
+export const useSessionCount = () => useAppStore(state => state.terminalSessions.length);
+export const useHasActiveSessions = () => useAppStore(state => state.terminalSessions.length > 0);
+export const useSessionNames = () => useAppStore(state =>
+  state.terminalSessions.map(s => ({ id: s.id, name: s.name }))
+);
+
+// Store subscriptions for external use
+export const subscribeToActiveSession = (callback: (sessionId: string | null) => void) => {
+  return useAppStore.subscribe(
+    state => state.activeSessionId,
+    callback
+  );
+};
+
+// Store persistence utilities
+export const getStoreSnapshot = () => {
+  const state = useAppStore.getState();
+  return {
+    terminalSessions: state.terminalSessions,
+    activeSessionId: state.activeSessionId,
+    sidebarOpen: state.sidebarOpen,
+  };
+};
+
+export const restoreStoreSnapshot = (snapshot: Partial<AppState>) => {
+  useAppStore.getState().batchUpdate(snapshot);
+};
+
+// Auto-close sidebar on mobile for better UX
+export const initializeSidebarForViewport = () => {
+  if (typeof window !== 'undefined') {
+    const isMobile = window.innerWidth < 768;
+    if (isMobile && useAppStore.getState().sidebarOpen) {
+      useAppStore.getState().setSidebarOpen(false);
+    }
+  }
+};
+
+// Development utilities
+if (process.env.NODE_ENV === 'development' && typeof window !== 'undefined') {
+  // @ts-ignore
+  window.claudeFlowStore = useAppStore;
+  // @ts-ignore
+  window.getStoreSnapshot = getStoreSnapshot;
+  // @ts-ignore
+  window.restoreStoreSnapshot = restoreStoreSnapshot;
+}

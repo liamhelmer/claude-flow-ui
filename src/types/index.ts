@@ -6,11 +6,12 @@ export interface TerminalSession {
 }
 
 export interface WebSocketMessage {
-  type: 'data' | 'resize' | 'create' | 'destroy' | 'list';
+  type: 'data' | 'resize' | 'create' | 'destroy' | 'list' | 'refresh-history';
   sessionId?: string;
   data?: string;
   cols?: number;
   rows?: number;
+  timestamp?: number;
 }
 
 export interface AppState {

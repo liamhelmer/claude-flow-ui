@@ -1,6 +1,6 @@
 {
   "name": "@liamhelmer/claude-flow-ui",
-  "version": "1.1.5",
+  "version": "1.2.0",
   "description": "A modern web-based terminal and monitoring interface for Claude Flow with real-time system monitoring and tmux integration",
   "author": "Liam Helmer <liam@liamhelmer.com>",
   "license": "MIT",
@@ -61,7 +61,7 @@
     "access": "public"
   },
   "scripts": {
-    "dev": "next dev",
+    "dev": "node unified-server.js",
     "build": "next build",
     "build:static": "NODE_ENV=production next build",
     "build:verify": "node scripts/build-verify.js",
@@ -74,6 +74,13 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "test:ci": "jest --ci --coverage --watchAll=false",
+    "test:production": "node tests/regression/run-production-tests.js",
+    "test:production-input": "NODE_ENV=production jest --config tests/regression/jest.production.config.js --testNamePattern=\"Input Display Delay\"",
+    "test:production-switch": "NODE_ENV=production jest --config tests/regression/jest.production.config.js --testNamePattern=\"Terminal Switching\"",
+    "test:production-ws": "NODE_ENV=production jest --config tests/regression/jest.production.config.js --testNamePattern=\"WebSocket\"",
+    "test:production-all": "NODE_ENV=production jest --config tests/regression/jest.production.config.js",
+    "test:terminal-input": "bash tests/regression/run-terminal-input-test.sh",
+    "test:terminal-input-playwright": "npx playwright test --config=tests/playwright.config.regression.js tests/regression/terminal-input.spec.js",
     "server": "node unified-server.js",
     "server:dev": "PORT=8080 node unified-server.js",
     "dev:all": "npm run dev & npm run server:dev",
@@ -100,6 +107,7 @@
     "@xterm/addon-webgl": "^0.18.0",
     "@xterm/xterm": "^5.5.0",
     "autoprefixer": "^10.4.20",
+    "claude-flow": "^2.0.0-alpha.112",
     "clsx": "^2.1.1",
     "cors": "^2.8.5",
     "express": "^5.1.0",
@@ -115,12 +123,13 @@
     "tailwind-merge": "^2.5.4",
     "tailwindcss": "^3.4.14",
     "typescript": "^5.6.0",
+    "unique-filename": "^4.0.0",
     "uuid": "^13.0.0",
     "zustand": "^5.0.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0",
-    "@tailwindcss/typography": "^0.5.15",
+    "@tailwindcss/typography": "^0.5.18",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.8.0",
     "@testing-library/react": "^16.3.0",
@@ -134,6 +143,7 @@
     "jest": "^30.0.5",
     "jest-axe": "^10.0.0",
     "jest-environment-jsdom": "^30.0.5",
+    "playwright": "^1.55.0",
     "react-test-renderer": "^18.3.1",
     "supertest": "^7.1.4"
   }

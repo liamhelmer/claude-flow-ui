@@ -348,69 +348,40 @@ class SecureTempDir {
   }
 
   /**
-   * Get platform-specific socket name with collision detection
+   * Get platform-specific socket name (simplified - unique-filename handles collision)
+   * This is now just for compatibility - the actual unique path is generated in tmux-stream-manager
    */
   getSocketPath(name) {
     const socketDir = this.getSocketDir();
-    
-    // Ensure socket name is safe and unique
+
+    // Just return a simple path - tmux-stream-manager will use unique-filename
     const safeName = name.replace(/[^a-zA-Z0-9-_]/g, '-');
-    
-    // Check if we need to use a shorter path due to Unix socket limitations
-    const baseSocketPath = path.join(socketDir, `${safeName}.sock`);
-    
-    // Unix socket path limit is typically 104-108 characters
-    if (baseSocketPath.length > 100 && process.platform !== 'win32') {
-      // Use /tmp/tmux-term directly for shorter paths
-      const shortDir = '/tmp/tmux-term';
-      if (!fs.existsSync(shortDir)) {
-        this.createSecureDirectory(shortDir, 0o700);
-      }
-      
-      // Use simpler naming: first 8 chars of session ID + counter
-      const shortName = `${this.sessionId.substring(0, 8)}-${safeName.substring(0, 8)}`;
-      const shortPath = path.join(shortDir, `${shortName}.sock`);
-      
-      if (process.env.DEBUG_TMUX) {
-        console.log(`[SecureTemp] Path too long (${baseSocketPath.length} chars), using: ${shortPath}`);
-      }
-      return shortPath;
-    }
-    
-    for (let attempt = 0; attempt < 10; attempt++) {
-      const suffix = attempt === 0 ? '' : `-${attempt}`;
-      const socketName = `${safeName}${suffix}.sock`;
-      const socketPath = path.join(socketDir, socketName);
-      
-      if (!fs.existsSync(socketPath)) {
-        return socketPath;
-      }
-      
-      // Socket exists, check if it's stale
+    const socketPath = path.join(socketDir, `${safeName}.sock`);
+
+    // Try to clean up any stale socket at this path
+    if (fs.existsSync(socketPath)) {
       try {
-        // Try to connect to see if it's active
-        const net = require('net');
-        const client = net.createConnection(socketPath);
-        
-        client.on('error', () => {
+        // Check if this is a stale tmux socket
+        const { execSync } = require('child_process');
+        try {
+          execSync(`tmux -S "${socketPath}" ls`, { stdio: 'ignore', timeout: 1000 });
+          // Socket is active, leave it alone
+        } catch {
           // Socket is stale, remove it
-          try {
-            fs.unlinkSync(socketPath);
-            if (process.env.DEBUG_TMUX) {
-              console.log(`[SecureTemp] Removed stale socket: ${socketPath}`);
-            }
-          } catch {
-            // Ignore cleanup errors
+          fs.unlinkSync(socketPath);
+          if (process.env.DEBUG_TMUX) {
+            console.log(`[SecureTemp] Removed stale socket: ${socketPath}`);
           }
-        });
-        
-        client.destroy();
-      } catch {
-        // Ignore connection test errors
+        }
+      } catch (err) {
+        // Ignore errors
+        if (process.env.DEBUG_TMUX) {
+          console.log(`[SecureTemp] Could not check/remove socket: ${err.message}`);
+        }
       }
     }
-    
-    throw new Error(`Failed to find available socket name for ${name}`);
+
+    return socketPath;
   }
 
   /**

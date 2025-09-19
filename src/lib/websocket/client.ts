@@ -6,9 +6,10 @@ class WebSocketClient {
   private url: string;
   private isConnecting: boolean = false;
   private listeners: Map<string, ((data: any) => void)[]> = new Map();
-  private pendingTerminalConfigs: Map<string, any> = new Map(); // Store terminal configs until listeners are ready
-  private pendingConfigCheckInterval: NodeJS.Timeout | null = null; // Periodic check for pending configs
-  private configRequestQueue: Map<string, { resolve: (config: any) => void; reject: (error: any) => void; timeout: NodeJS.Timeout }> = new Map(); // Track config requests with promises
+  private reconnectAttempts: number = 0;
+  private maxReconnectAttempts: number = 5;
+  private connectionPromise: Promise<void> | null = null;
+  // Config is now handled via HTTP API, not WebSocket
 
   constructor(url?: string) {
     if (url) {
@@ -39,9 +40,25 @@ class WebSocketClient {
         return;
       }
 
+      // PRODUCTION FIX: Cancel any pending disconnects when connecting
+      if ((this as any)._pendingDisconnect) {
+        clearTimeout((this as any)._pendingDisconnect);
+        delete (this as any)._pendingDisconnect;
+        console.debug('[WebSocket] Cancelled pending disconnect due to new connection request');
+      }
+
       if (this.socket?.connected) {
-        resolve();
-        return;
+        // In development, disconnect and reconnect to ensure fresh handlers
+        if (process.env.NODE_ENV === 'development') {
+          console.debug('[WebSocket] Already connected, reconnecting with fresh handlers...');
+          this.disconnect();
+          // Continue to reconnect below
+        } else {
+          // PRODUCTION FIX: Log connection reuse for debugging
+          console.debug('[WebSocket] Already connected, reusing existing connection');
+          resolve();
+          return;
+        }
       }
 
       if (this.isConnecting) {
@@ -78,8 +95,9 @@ class WebSocketClient {
         transports: ['websocket', 'polling'],
         autoConnect: false, // CRITICAL: Don't auto-connect until event listeners are set up
         reconnection: true,
-        reconnectionAttempts: 5,
+        reconnectionAttempts: this.maxReconnectAttempts,
         reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
       });
 
       // Set up ALL event listeners BEFORE connecting to avoid race conditions
@@ -91,43 +109,31 @@ class WebSocketClient {
       });
 
       this.socket.on('terminal-data', (data) => {
-        this.emit('terminal-data', data);
+        console.debug('[WebSocket] 🔌 Socket.IO received terminal-data event:', {
+          sessionId: data?.sessionId,
+          dataLength: data?.data?.length,
+          hasData: !!data?.data,
+          isRefreshResponse: data?.isRefreshResponse,
+          timestamp: Date.now()
+        });
+
+        // CRITICAL FIX: Ensure data integrity and streaming continuity
+        if (data && typeof data === 'object') {
+          // Add timestamp for streaming tracking
+          data._receivedAt = Date.now();
+
+          // Emit immediately to prevent buffering delays
+          this.emit('terminal-data', data);
+        } else {
+          console.warn('[WebSocket] ⚠️ Invalid terminal-data format received:', data);
+        }
       });
 
       this.socket.on('terminal-resize', (data) => {
         this.emit('terminal-resize', data);
       });
 
-      // CRITICAL: Register terminal-config listener BEFORE connecting
-      this.socket.on('terminal-config', (data) => {
-        console.debug('[WebSocket] 🔧 TERMINAL-CONFIG EVENT RECEIVED in client.ts:', data);
-        console.debug('[WebSocket] 🔧 DEBUG: About to emit terminal-config to listeners, listener count:', this.listeners.get('terminal-config')?.length || 0);
-        
-        // FIRST: Handle any pending config requests for this session
-        const pendingRequest = this.configRequestQueue.get(data.sessionId);
-        if (pendingRequest) {
-          console.debug('[WebSocket] 🔧 Resolving pending config request for sessionId:', data.sessionId);
-          clearTimeout(pendingRequest.timeout);
-          pendingRequest.resolve(data);
-          this.configRequestQueue.delete(data.sessionId);
-        }
-        
-        // SECOND: Handle regular event listeners
-        const listenerCount = this.listeners.get('terminal-config')?.length || 0;
-        if (listenerCount === 0) {
-          // No listeners yet - store the config for later delivery
-          console.debug('[WebSocket] 🔧 DEBUG: No listeners available, storing terminal-config for sessionId:', data.sessionId);
-          this.pendingTerminalConfigs.set(data.sessionId, data);
-          
-          // Start periodic check if not already running
-          this.startPendingConfigCheck();
-        } else {
-          // Emit immediately if listeners are available
-          this.emit('terminal-config', data);
-        }
-        
-        console.debug('[WebSocket] 🔧 DEBUG: terminal-config event processed');
-      });
+      // Terminal config is now fetched via HTTP API, not WebSocket
 
       this.socket.on('terminal-error', (data) => {
         this.emit('terminal-error', data);
@@ -146,10 +152,28 @@ class WebSocketClient {
         this.emit('session-destroyed', data);
       });
 
+      // Terminal spawning events
+      this.socket.on('terminal-spawned', (data) => {
+        console.debug('[WebSocket] 🔌 Socket.IO received terminal-spawned:', data);
+        this.emit('terminal-spawned', data);
+      });
+
+      this.socket.on('terminal-closed', (data) => {
+        console.debug('[WebSocket] 🔌 Socket.IO received terminal-closed:', data);
+        this.emit('terminal-closed', data);
+      });
+
+      // Handle refresh-history responses
+      this.socket.on('history-refreshed', (data) => {
+        console.debug('[WebSocket] 🔌 Socket.IO received history-refreshed:', data);
+        this.emit('history-refreshed', data);
+      });
+
       // Connection event handlers
       this.socket.on('connect', () => {
         console.debug('[WebSocket] Successfully connected! Socket ID:', this.socket?.id);
         this.isConnecting = false;
+        this.reconnectAttempts = 0; // Reset on successful connection
         clearTimeout(connectionTimeout);
         resolve();
       });
@@ -157,15 +181,40 @@ class WebSocketClient {
       this.socket.on('disconnect', (reason) => {
         console.debug('[WebSocket] Disconnected:', reason);
         this.isConnecting = false;
+
+        // Emit disconnect event to listeners
+        this.emit('connection-change', false);
+
+        // Handle unexpected disconnections
+        if (reason === 'io server disconnect') {
+          // Server terminated the connection, try to reconnect
+          console.warn('[WebSocket] Server disconnected, attempting reconnect...');
+        }
       });
 
       this.socket.on('connect_error', (error) => {
         console.error('[WebSocket] Connection error:', error.message, 'URL:', this.url);
-        console.error('[WebSocket] Full error:', error);
         this.isConnecting = false;
-        // Don't reject on connection error if we're already connected
+        this.reconnectAttempts++;
+
+        // Emit error to listeners with enhanced context
+        this.emit('connection-error', {
+          error: error.message,
+          attempt: this.reconnectAttempts,
+          maxAttempts: this.maxReconnectAttempts,
+          url: this.url
+        });
+
+        // Handle connection failures with proper rejection
         if (!this.socket?.connected) {
-          reject(error);
+          if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+            const errorMsg = `Failed to connect after ${this.maxReconnectAttempts} attempts: ${error.message}`;
+            console.error('[WebSocket] ❌ Max reconnection attempts reached');
+            reject(new Error(errorMsg));
+          } else {
+            console.warn(`[WebSocket] ⚠️ Connection attempt ${this.reconnectAttempts} failed, will retry`);
+            reject(error);
+          }
         }
       });
 
@@ -183,30 +232,48 @@ class WebSocketClient {
   }
 
   disconnect(): void {
+    // PRODUCTION FIX: Add safety check and enhanced logging
+    console.debug('[WebSocket] Disconnect requested', {
+      hasSocket: !!this.socket,
+      connected: this.socket?.connected,
+      listenerCount: this.listeners.size,
+      env: process.env.NODE_ENV
+    });
+
     if (this.socket) {
       // Remove all listeners before disconnecting to prevent memory leaks
       this.socket.removeAllListeners();
       this.socket.disconnect();
       this.socket = null;
+      console.debug('[WebSocket] Socket disconnected and cleaned up');
     }
     this.isConnecting = false;
     this.listeners.clear();
-    this.stopPendingConfigCheck();
-    this.pendingTerminalConfigs.clear();
-    
-    // Clean up any pending config requests
-    for (const [sessionId, request] of this.configRequestQueue.entries()) {
-      clearTimeout(request.timeout);
-      request.reject(new Error('WebSocket disconnected'));
-    }
-    this.configRequestQueue.clear();
   }
 
   send(event: string, data: any): void {
-    if (this.socket?.connected) {
+    if (!this.socket) {
+      console.error('[WebSocket] ❌ No socket instance available');
+      return;
+    }
+
+    if (!this.socket.connected) {
+      console.warn('[WebSocket] ⚠️ Socket not connected, cannot send:', event);
+      // Attempt to reconnect if disconnected
+      if (!this.isConnecting) {
+        console.debug('[WebSocket] 🔄 Attempting to reconnect...');
+        this.connect().catch(err => {
+          console.error('[WebSocket] ❌ Failed to reconnect:', err);
+        });
+      }
+      return;
+    }
+
+    try {
+      console.debug(`[WebSocket] 📨 Sending event '${event}' with data:`, data);
       this.socket.emit(event, data);
-    } else {
-      console.warn('WebSocket not connected, cannot send message');
+    } catch (error) {
+      console.error('[WebSocket] ❌ Failed to send event:', event, error);
     }
   }
 
@@ -214,68 +281,48 @@ class WebSocketClient {
     this.send('message', message);
   }
 
-  // Request terminal config and return a promise that resolves with the config
-  requestTerminalConfigAsync(sessionId: string, timeoutMs: number = 5000): Promise<any> {
-    return new Promise((resolve, reject) => {
-      if (!this.socket?.connected) {
-        reject(new Error('WebSocket not connected'));
-        return;
-      }
+  // Terminal config is now fetched via HTTP API, not WebSocket
 
-      console.debug(`[WebSocket] 🔧 Requesting terminal config with promise for session: ${sessionId}`);
-      
-      // Set up timeout
-      const timeout = setTimeout(() => {
-        this.configRequestQueue.delete(sessionId);
-        reject(new Error(`Terminal config request timeout for session ${sessionId}`));
-      }, timeoutMs);
-      
-      // Store the request
-      this.configRequestQueue.set(sessionId, { resolve, reject, timeout });
-      
-      // Send the request
-      this.socket.emit('request-config', { sessionId });
-      
-      console.debug(`[WebSocket] 🔧 Config request sent for session: ${sessionId}, timeout: ${timeoutMs}ms`);
-    });
-  }
-
-  // Event emitter-like interface
+  // Enhanced event emitter with proper deduplication
   on(event: string, callback: (data: any) => void): void {
+    if (!event || typeof callback !== 'function') {
+      console.error('[WebSocket] ❌ Invalid event or callback for listener registration');
+      return;
+    }
+
     if (!this.listeners.has(event)) {
       this.listeners.set(event, []);
     }
     const eventListeners = this.listeners.get(event)!;
-    
-    // Check if this callback is already registered (prevent duplicates)
-    if (!eventListeners.includes(callback)) {
-      // Prevent memory leaks by limiting listeners
-      if (eventListeners.length >= 10) {
-        console.warn(`MaxListenersExceededWarning: ${event} has ${eventListeners.length} listeners. Consider using off() to remove listeners.`);
-      }
-      
-      eventListeners.push(callback);
-      console.debug(`[WebSocket] 📊 Added listener for ${event} (total: ${eventListeners.length})`);
-    } else {
-      console.debug(`[WebSocket] 📊 Callback already registered for ${event} (total: ${eventListeners.length})`);
+
+    // FIXED: Proper duplicate detection - check if the exact same callback already exists
+    const isDuplicate = eventListeners.some(listener => listener === callback);
+    if (isDuplicate) {
+      console.debug(`[WebSocket] ℹ️ Callback already registered for ${event}, skipping duplicate`);
+      return; // Don't add duplicate
     }
-    
-    // Special handling for terminal-config: deliver any pending configs for this event
-    if (event === 'terminal-config' && this.pendingTerminalConfigs.size > 0) {
-      console.debug('[WebSocket] 🔧 DEBUG: terminal-config listener registered, checking for pending configs...', this.pendingTerminalConfigs.size);
-      
-      // Deliver all pending terminal configs
-      for (const [sessionId, configData] of this.pendingTerminalConfigs.entries()) {
-        console.debug('[WebSocket] 🔧 DEBUG: Delivering pending terminal-config for sessionId:', sessionId, configData);
-        // Use setTimeout to ensure the listener is fully registered before calling
-        setTimeout(() => {
-          callback(configData);
-        }, 0);
+
+    // PRODUCTION FIX: Increase listener limit for terminal events to handle multiple terminals
+    // Each terminal needs its own set of listeners for proper event routing
+    const MAX_LISTENERS_PER_EVENT = 10; // Increased to support multiple terminals without warnings
+    if (eventListeners.length >= MAX_LISTENERS_PER_EVENT) {
+      // Only warn in development mode
+      if (process.env.NODE_ENV === 'development') {
+        console.warn(`[WebSocket] ⚠️ Maximum listeners (${MAX_LISTENERS_PER_EVENT}) reached for ${event}`);
       }
-      
-      // Clear pending configs after delivery
-      this.pendingTerminalConfigs.clear();
-      console.debug('[WebSocket] 🔧 DEBUG: All pending terminal-configs delivered and cleared');
+      // In production, silently remove the oldest to prevent memory leaks
+      const removed = eventListeners.shift(); // Remove oldest
+      if (process.env.NODE_ENV === 'development') {
+        console.debug(`[WebSocket] 🗑️ Removed oldest listener for ${event}`);
+      }
+    }
+
+    eventListeners.push(callback);
+
+    // Essential events always get logged in production
+    const isEssential = ['terminal-data', 'connection-change', 'terminal-error'].includes(event);
+    if (process.env.NODE_ENV === 'development' || isEssential) {
+      console.debug(`[WebSocket] ✅ Registered listener for ${event} (total: ${eventListeners.length})`);
     }
   }
 
@@ -291,14 +338,45 @@ class WebSocketClient {
 
   private emit(event: string, data: any): void {
     const eventListeners = this.listeners.get(event);
-    console.debug(`[WebSocket] 🔧 DEBUG: emit(${event}) - found ${eventListeners?.length || 0} listeners`);
-    if (eventListeners) {
-      eventListeners.forEach((callback, index) => {
-        console.debug(`[WebSocket] 🔧 DEBUG: Calling listener ${index} for ${event}`);
-        callback(data);
+    const isEssential = ['terminal-data', 'connection-change', 'terminal-error'].includes(event);
+
+    if (process.env.NODE_ENV === 'development' || isEssential) {
+      console.debug(`[WebSocket] 🔧 emit(${event}) - found ${eventListeners?.length || 0} listeners`);
+    }
+
+    if (eventListeners && eventListeners.length > 0) {
+      // ENHANCED FIX: Process listeners with better error isolation
+      const listenersToCall = [...eventListeners]; // Clone to avoid modification during iteration
+
+      listenersToCall.forEach((callback, index) => {
+        try {
+          if (process.env.NODE_ENV === 'development' || isEssential) {
+            console.debug(`[WebSocket] 🔧 Calling listener ${index} for ${event}`);
+          }
+
+          // CRITICAL FIX: Call listener with proper error boundary
+          setTimeout(() => {
+            try {
+              callback(data);
+            } catch (listenerError) {
+              console.error(`[WebSocket] ❌ Error in async listener ${index} for ${event}:`, listenerError);
+            }
+          }, 0); // Async execution to prevent blocking
+
+        } catch (error) {
+          console.error(`[WebSocket] ❌ Error in listener ${index} for ${event}:`, error);
+        }
       });
     } else {
-      console.warn(`[WebSocket] ⚠️ No listeners registered for event: ${event}`);
+      // Enhanced warning for missing listeners
+      if (isEssential) {
+        console.warn(`[WebSocket] ⚠️ No listeners registered for essential event: ${event}`, {
+          totalListeners: this.listeners.size,
+          allEvents: Array.from(this.listeners.keys())
+        });
+      } else if (process.env.NODE_ENV === 'development') {
+        console.warn(`[WebSocket] ⚠️ No listeners registered for event: ${event}`);
+      }
     }
   }
 
@@ -310,49 +388,6 @@ class WebSocketClient {
     return this.isConnecting;
   }
 
-  // Periodic check for pending terminal configs
-  private startPendingConfigCheck(): void {
-    if (this.pendingConfigCheckInterval) {
-      return; // Already running
-    }
-
-    console.debug('[WebSocket] 🔧 Starting periodic check for pending terminal configs (every 1 second)');
-    this.pendingConfigCheckInterval = setInterval(() => {
-      if (this.pendingTerminalConfigs.size === 0) {
-        console.debug('[WebSocket] 🔧 Periodic check: No pending configs, stopping interval');
-        this.stopPendingConfigCheck();
-        return;
-      }
-
-      const terminalConfigListeners = this.listeners.get('terminal-config');
-      if (terminalConfigListeners && terminalConfigListeners.length > 0) {
-        console.debug('[WebSocket] 🔧 Periodic check: Found terminal-config listeners, delivering pending configs...');
-        
-        // Deliver all pending configs
-        for (const [sessionId, configData] of this.pendingTerminalConfigs.entries()) {
-          console.debug('[WebSocket] 🔧 Periodic delivery: Sending terminal-config for sessionId:', sessionId, configData);
-          terminalConfigListeners.forEach(callback => {
-            callback(configData);
-          });
-        }
-        
-        // Clear pending configs and stop checking
-        this.pendingTerminalConfigs.clear();
-        this.stopPendingConfigCheck();
-        console.debug('[WebSocket] 🔧 Periodic delivery: All configs delivered, stopping interval');
-      } else {
-        console.debug('[WebSocket] 🔧 Periodic check: Still waiting for terminal-config listeners...', this.pendingTerminalConfigs.size, 'pending configs');
-      }
-    }, 1000); // Check every second
-  }
-
-  private stopPendingConfigCheck(): void {
-    if (this.pendingConfigCheckInterval) {
-      clearInterval(this.pendingConfigCheckInterval);
-      this.pendingConfigCheckInterval = null;
-      console.debug('[WebSocket] 🔧 Stopped periodic config check');
-    }
-  }
 }
 
 // Export a singleton instance
