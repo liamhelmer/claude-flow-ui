@@ -434,7 +434,18 @@ class TmuxStreamManager {
             session.lastCapture = capture;
             session.lastCaptureLines = currentLines;
             session.historyBuffer = capture; // Keep full state for new clients
-            
+
+            // Get cursor position and append it to update data
+            try {
+              const cursorPos = await this.getCursorPosition(sessionName, session.socketPath);
+              if (cursorPos) {
+                // Add cursor positioning command to the update
+                updateData += `\x1b[${cursorPos.row};${cursorPos.col}H`;
+              }
+            } catch (err) {
+              // Ignore cursor position errors
+            }
+
             // Send updates to all clients
             if (process.env.DEBUG_TMUX && session.clients.size > 0) {
               console.log(`[TmuxStream] 📤 Sending ${updateData.length} bytes to ${session.clients.size} clients`);
@@ -797,6 +808,41 @@ class TmuxStreamManager {
       '-x', cols.toString(),
       '-y', rows.toString()
     ], { stdio: 'ignore' });
+  }
+
+  /**
+   * Get cursor position from tmux pane
+   */
+  async getCursorPosition(sessionName, socketPath) {
+    return new Promise((resolve) => {
+      const tmux = spawn('tmux', [
+        '-S', socketPath,
+        'display-message',
+        '-t', sessionName,
+        '-p',
+        '#{cursor_y},#{cursor_x}'
+      ], { stdio: 'pipe' });
+
+      let output = '';
+      tmux.stdout.on('data', (data) => {
+        output += data.toString();
+      });
+
+      tmux.on('close', () => {
+        const match = output.trim().match(/^(\d+),(\d+)$/);
+        if (match) {
+          // tmux uses 0-based indexing, terminal uses 1-based
+          resolve({
+            row: parseInt(match[1]) + 1,
+            col: parseInt(match[2]) + 1
+          });
+        } else {
+          resolve(null);
+        }
+      });
+
+      tmux.on('error', () => resolve(null));
+    });
   }
 
   /**

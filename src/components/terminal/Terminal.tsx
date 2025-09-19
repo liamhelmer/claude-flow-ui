@@ -161,11 +161,11 @@ export default function Terminal({ sessionId, className }: TerminalProps) {
 
   return (
     <div className={cn(
-      'terminal-outer-container flex justify-center items-center h-full bg-gray-950 p-4',
+      'terminal-outer-container flex justify-start items-start h-full bg-gray-950',
       className
     )}>
-      {/* Dynamic-size terminal box */}
-      <div 
+      {/* Dynamic-size terminal box - aligned to top-left without padding */}
+      <div
         className={cn(
           'terminal-container relative flex bg-[#1e1e1e] border border-gray-700 rounded-lg shadow-2xl',
           displayState.type !== 'ready' && 'items-center justify-center'

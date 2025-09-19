@@ -403,7 +403,7 @@ export default function HomePage() {
         onSessionClose={handleSessionClose}
       />
 
-      {/* Main Content */}
+      {/* Main Content - Terminal Area directly adjacent to sidebar */}
       <div className="flex-1 flex min-w-0">
         {/* Terminal Area - no tabs needed for single terminal */}
         <div className="flex-1 relative">
