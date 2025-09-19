@@ -424,8 +424,8 @@ class TmuxStreamManager {
             for (let i = 0; i < currentLines.length; i++) {
               if (currentLines[i] !== previousLines[i]) {
                 hasChanges = true;
-                // Move cursor to line and update it
-                updateData += `\x1b[${i + 1};1H\x1b[2K${currentLines[i]}\n`;
+                // Move cursor to line and update it - no newline needed as cursor positioning handles it
+                updateData += `\x1b[${i + 1};1H\x1b[2K${currentLines[i]}`;
               }
             }
           }
