@@ -1,0 +1,71 @@
+{
+  "timestamp": "2025-09-18T19:04:54.455Z",
+  "duration": "72.0s",
+  "summary": {
+    "overallSuccess": false,
+    "testsCompleted": 4,
+    "testsPassed": 1
+  },
+  "details": {
+    "unitTests": {
+      "success": false,
+      "output": "🧪 Global test setup started\n✅ Global test setup completed\n  console.log\n    ✅ Reliable Jest setup completed\n\n      at Object.<anonymous> (tests/jest.setup.reliable.js:116:9)\n\n🧹 Global test teardown started\n🕒 Total test duration: 3318ms\n✅ Global test teardown completed\n",
+      "errors": "FAIL tests/terminal-input-unit.test.ts\n  Terminal Input Unit Tests\n    Input Data Flow\n      ✓ should capture terminal input via onData handler (128 ms)\n      ✓ should handle special characters in input (105 ms)\n      ✓ should handle Unicode characters correctly (104 ms)\n    Session Management\n      ✓ should route input to correct session ID (205 ms)\n      ✕ should handle empty session ID gracefully (104 ms)\n      ✓ should handle rapid session switching (333 ms)\n    WebSocket Integration\n      ✕ should handle WebSocket disconnection during input (103 ms)\n      ✕ should handle sendData function becoming unavailable (102 ms)\n      ✓ should register WebSocket event listeners correctly (104 ms)\n    Focus Management\n      ✓ should focus terminal when focusTerminal is called (103 ms)\n      ✓ should return false when focusing terminal without element (103 ms)\n      ✓ should handle focus errors gracefully (102 ms)\n    Terminal Data Handling\n      ✓ should handle incoming terminal data correctly (102 ms)\n      ✓ should handle session ID mismatch in incoming data (101 ms)\n      ✕ should queue data when terminal is not ready (216 ms)\n    Error Handling\n      ✓ should handle onData callback errors gracefully (104 ms)\n      ✓ should handle sendData errors gracefully (112 ms)\n    Performance and Memory\n      ✓ should dispose terminal resources properly (109 ms)\n      ✓ should handle rapid terminal recreation (203 ms)\n\n  ● Terminal Input Unit Tests › Session Management › should handle empty session ID gracefully\n\n    expect(jest.fn()).toHaveBeenCalledWith(...expected)\n\n    Expected: StringContaining \"No session ID available\"\n\n    Number of calls: 0\n\n      238 |       if (mockTerminal.onData.mock.calls.length === 0) {\n      239 |         // Terminal not created due to empty sessionId - test still valid\n    > 240 |         expect(consoleSpy).toHaveBeenCalledWith(\n          |                            ^\n      241 |           expect.stringContaining('No session ID available')\n      242 |         );\n      243 |         consoleSpy.mockRestore();\n\n      at Object.toHaveBeenCalledWith (tests/terminal-input-unit.test.ts:240:28)\n\n  ● Terminal Input Unit Tests › WebSocket Integration › should handle WebSocket disconnection during input\n\n    expect(jest.fn()).toHaveBeenCalledWith(...expected)\n\n    Expected: StringContaining \"sendData not available\", Any<Object>\n\n    Number of calls: 0\n\n      314 |\n      315 |       // Should log error about sendData not being available\n    > 316 |       expect(consoleSpy).toHaveBeenCalledWith(\n          |                          ^\n      317 |         expect.stringContaining('sendData not available'),\n      318 |         expect.any(Object)\n      319 |       );\n\n      at Object.toHaveBeenCalledWith (tests/terminal-input-unit.test.ts:316:26)\n\n  ● Terminal Input Unit Tests › WebSocket Integration › should handle sendData function becoming unavailable\n\n    expect(jest.fn()).toHaveBeenCalledWith(...expected)\n\n    Expected: StringContaining \"sendData not available\", Any<Object>\n\n    Number of calls: 0\n\n      341 |       });\n      342 |\n    > 343 |       expect(consoleSpy).toHaveBeenCalledWith(\n          |                          ^\n      344 |         expect.stringContaining('sendData not available'),\n      345 |         expect.any(Object)\n      346 |       );\n\n      at Object.toHaveBeenCalledWith (tests/terminal-input-unit.test.ts:343:26)\n\n  ● Terminal Input Unit Tests › Terminal Data Handling › should queue data when terminal is not ready\n\n    TypeError: viewport.addEventListener is not a function\n\n      411 |       const viewport = terminal.element?.querySelector('.xterm-viewport') as HTMLElement;\n      412 |       if (viewport) {\n    > 413 |         viewport.addEventListener('scroll', checkScrollPosition);\n          |                  ^\n      414 |         \n      415 |         // Add wheel event handler for proper scrollback behavior\n      416 |         let wheelTimeout: NodeJS.Timeout | null = null;\n\n      at addEventListener (src/hooks/useTerminal.ts:413:18)\n      at Timeout.task [as _onTimeout] (node_modules/jsdom/lib/jsdom/browser/Window.js:579:19)\n\nTest Suites: 1 failed, 1 total\nTests:       4 failed, 15 passed, 19 total\nSnapshots:   0 total\nTime:        3.307 s\nRan all test suites matching tests/terminal-input-unit.test.ts.\nForce exiting Jest: Have you considered using `--detectOpenHandles` to detect async operations that kept running after all tests finished?\n",
+      "details": {
+        "testsRun": 0,
+        "testsPassed": 0,
+        "testsFailed": 0,
+        "suites": []
+      }
+    },
+    "verificationTests": {
+      "success": false,
+      "output": "[SUITE] Starting comprehensive terminal input test suite {}\n[SETUP] Starting production server { port: 11300 }\n[SERVER] > @liamhelmer/claude-flow-ui@1.1.5 claude-flow-ui\n> node unified-server.js --port 11300 --terminal-size 100x30 hive-mind spawn wait for testing {}\n[SERVER] ⚡ Using Next.js server (production mode) {}\n[SERVER] ✅ Tmux is available - using streaming tmux session management {}\n[SERVER-ERR] Failed to start server: Error: Could not find a production build in the '.next' directory. Try building your app with 'next build' before starting the production server. https://nextjs.org/docs/messages/production-start-no-build-id\n    at async startServer (unified-server.js:1078:5) {}\n[ERROR] Test suite failed {\n  error: 'Server failed to start within 30 seconds. Output: \\n' +\n    '> @liamhelmer/claude-flow-ui@1.1.5 claude-flow-ui\\n' +\n    '> node unified-server.js --port 11300 --terminal-size 100x30 hive-mind spawn wait for testing\\n' +\n    '\\n' +\n    '⚡ Using Next.js server (production mode)\\n' +\n    '✅ Tmux is available - using streaming tmux session management\\n' +\n    \"Failed to start server: Error: Could not find a production build in the '.next' directory. Try building your app with 'next build' before starting the production server. https://nextjs.org/docs/messages/production-start-no-build-id\\n\" +\n    '    at async startServer (unified-server.js:1078:5)\\n'\n}\n\n================================================================================\nTERMINAL INPUT VERIFICATION RESULTS\n================================================================================\nOverall Success: ❌ FAIL\nTests Passed: 0/6\n\nDetailed Results:\n  singleTerminalInput: ❌\n  multiTerminalRouting: ❌\n  sessionSwitching: ❌\n  focusManagement: ❌\n  websocketReconnection: ❌\n  immediateInput: ❌\n\nRecommendations:\n  1. Fix basic terminal input - fundamental functionality broken\n  2. Improve input routing for multiple terminal scenarios\n  3. Fix session switching and focus management\n  4. Improve terminal focus handling and click events\n  5. Enhance WebSocket reconnection and input recovery\n  6. Fix input handling during page load and initialization\n\n================================================================================\n[CLEANUP] Cleaning up test environment {}\n",
+      "errors": "",
+      "details": {
+        "overallSuccess": false,
+        "testsRun": 6,
+        "testsPassed": 0,
+        "specificResults": {
+          "Overall Success": false,
+          "singleTerminalInput": false,
+          "multiTerminalRouting": false,
+          "sessionSwitching": false,
+          "focusManagement": false,
+          "websocketReconnection": false,
+          "immediateInput": false
+        }
+      }
+    },
+    "stressTests": {
+      "success": true,
+      "output": "🚨 Starting Terminal Input Stress Test Suite\n============================================================\n🚀 Setting up stress test environment...\n",
+      "errors": "",
+      "details": {
+        "overallSuccess": false,
+        "successRate": 0,
+        "performanceMetrics": {}
+      }
+    },
+    "manualTests": null,
+    "existingTests": [
+      {
+        "file": "tests/simple-input-test.js",
+        "success": true,
+        "output": "🚀 Starting production server...\n📊 Server: > @liamhelmer/claude-flow-ui@1.1.5 claude-flow-ui\n> node unified-server.js --port 11242 --terminal-size 80x24 echo ready\n📊 Server: ⚡ Using Next.js server (production mode)\n📊 Server: ✅ Tmux is available - using streaming tmux session management\n⚠️ Server stderr: Failed to start server: Error: Could not find a production build in the '.next' directory. Try building your app with 'next build' before starting the production server. https://nextjs.org/docs/messages/production-start-no-build-id\n    at async startServer (unified-server.js:1078:5)\n",
+        "errors": ""
+      },
+      {
+        "file": "tests/terminal-input-regression.test.js",
+        "success": false,
+        "output": "🚀 Starting production server for input test...\n📊 Server: > @liamhelmer/claude-flow-ui@1.1.5 claude-flow-ui\n> node unified-server.js --port 11241 --terminal-size 120x40 hive-mind spawn wait for instructions --claude\n📊 Server: ⚡ Using Next.js server (production mode)\n📊 Server: ✅ Tmux is available - using streaming tmux session management\n⚠️ Server stderr: Failed to start server: Error: Could not find a production build in the '.next' directory. Try building your app with 'next build' before starting the production server. https://nextjs.org/docs/messages/production-start-no-build-id\n    at async startServer (unified-server.js:1078:5)\nServer output so far: \n> @liamhelmer/claude-flow-ui@1.1.5 claude-flow-ui\n> node unified-server.js --port 11241 --terminal-size 120x40 hive-mind spawn wait for instructions --claude\n\n⚡ Using Next.js server (production mode)\n✅ Tmux is available - using streaming tmux session management\n\nServer error output: Failed to start server: Error: Could not find a production build in the '.next' directory. Try building your app with 'next build' before starting the production server. https://nextjs.org/docs/messages/production-start-no-build-id\n    at async startServer (unified-server.js:1078:5)\n\n\n🎯 REGRESSION TEST FINAL RESULT:\n{\n  \"success\": false,\n  \"error\": \"Server timeout\"\n}\n\n⚠️ TERMINAL INPUT NOT WORKING - FIX NEEDED!\n",
+        "errors": "💥 Test failed: Server timeout\n"
+      }
+    ]
+  },
+  "recommendations": [
+    "Fix failing unit tests - these indicate fundamental issues with terminal input handling",
+    "Address verification test failures - these represent real-world usage scenarios",
+    "Fix existing regression tests: terminal-input-regression.test.js"
+  ]
+}
