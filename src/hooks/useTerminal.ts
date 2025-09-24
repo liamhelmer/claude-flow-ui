@@ -76,7 +76,7 @@ export const useTerminal = ({
         fontSize: 14,
         fontFamily: 'JetBrains Mono, Menlo, Monaco, Consolas, monospace',
         cursorBlink: true,
-        scrollback: 999999,
+        scrollback: 10000,  // 10,000 lines of scrollback
         cols: 0, // Zero dimensions prevent terminal creation
         rows: 0, // Zero dimensions prevent terminal creation
       };
@@ -96,7 +96,7 @@ export const useTerminal = ({
       fontSize: 14,
       fontFamily: 'JetBrains Mono, Menlo, Monaco, Consolas, monospace',
       cursorBlink: true,
-      scrollback: 999999,  // Effectively unlimited scrollback
+      scrollback: 10000,  // 10,000 lines of scrollback
       cols: backendCols,  // Use ONLY backend-configured columns
       rows: backendRows,  // Use ONLY backend-configured rows
     };
@@ -219,7 +219,7 @@ export const useTerminal = ({
       drawBoldTextInBrightColors: true,  // Use bright colors for bold text
       
       // Enhanced scrolling and performance
-      scrollback: 50000,          // Large scrollback buffer for history
+      scrollback: 10000,          // 10,000 lines scrollback buffer
       scrollOnUserInput: true,    // Auto-scroll on input when at bottom
       smoothScrollDuration: 0,    // Disable smooth scrolling for performance
       fastScrollModifier: 'shift',

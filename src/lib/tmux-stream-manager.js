@@ -129,8 +129,38 @@ class TmuxStreamManager {
               
               // Don't set remain-on-exit so pane can die when command completes
               // This allows proper termination detection
-              
-              resolve();
+
+              // Configure tmux session for scrollback and mouse support
+              Promise.all([
+                // Set history limit to 10000 lines
+                new Promise((res) => {
+                  const histProc = spawn('tmux', [
+                    '-S', socketPath,
+                    'set-option', '-t', actualSessionName,
+                    'history-limit', '10000'
+                  ]);
+                  histProc.on('exit', () => res());
+                  histProc.on('error', () => res());
+                }),
+                // Enable mouse support for scrolling
+                new Promise((res) => {
+                  const mouseProc = spawn('tmux', [
+                    '-S', socketPath,
+                    'set-option', '-t', actualSessionName,
+                    'mouse', 'on'
+                  ]);
+                  mouseProc.on('exit', () => res());
+                  mouseProc.on('error', () => res());
+                })
+              ]).then(() => {
+                if (process.env.DEBUG_TMUX) {
+                  console.log(`[TmuxStream] Configured session ${actualSessionName}: history-limit=10000, mouse=on`);
+                }
+                resolve();
+              }).catch(() => {
+                // Still resolve even if config fails
+                resolve();
+              });
             } else {
               console.error(`[TmuxStream] Session ${actualSessionName} verification failed after creation`);
               console.error(`[TmuxStream] Socket: ${socketPath}, exists: ${require('fs').existsSync(socketPath)}`);
@@ -415,17 +445,35 @@ class TmuxStreamManager {
           let hasChanges = false;
           let updateData = '';
           
-          // If this is completely different content (like after a clear), send full update
-          if (previousLines.length === 0 || currentLines.length !== previousLines.length) {
+          // Detect if screen was cleared (significantly different content)
+          const screenCleared = previousLines.length > 5 && currentLines.length < previousLines.length / 2;
+
+          if (screenCleared) {
+            // Screen was cleared, send clear command followed by new content
             hasChanges = true;
-            updateData = '\x1b[2J\x1b[H' + capture; // Clear and full content
+            updateData = '\x1b[2J\x1b[H' + capture;
+          } else if (previousLines.length === 0) {
+            // First capture, send full content
+            hasChanges = true;
+            updateData = capture;
           } else {
-            // Check for line-by-line changes and only send differences
-            for (let i = 0; i < currentLines.length; i++) {
-              if (currentLines[i] !== previousLines[i]) {
-                hasChanges = true;
-                // Move cursor to line and update it - no newline needed as cursor positioning handles it
-                updateData += `\x1b[${i + 1};1H\x1b[2K${currentLines[i]}`;
+            // Normal update - check for new lines at the bottom (scrolling content)
+            // This preserves scrollback as new lines are naturally added
+            if (currentLines.length > previousLines.length) {
+              // New lines added
+              hasChanges = true;
+              const newLinesCount = currentLines.length - previousLines.length;
+              const newLines = currentLines.slice(-newLinesCount);
+              // Send the new lines with newline characters to build scrollback
+              updateData = newLines.join('\n') + '\n';
+            } else {
+              // Check for line-by-line changes in visible area
+              for (let i = 0; i < currentLines.length; i++) {
+                if (currentLines[i] !== previousLines[i]) {
+                  hasChanges = true;
+                  // Update specific line
+                  updateData += `\x1b[${i + 1};1H\x1b[2K${currentLines[i]}`;
+                }
               }
             }
           }
