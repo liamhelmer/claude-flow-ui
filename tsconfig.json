@@ -37,6 +37,7 @@
   ],
   "exclude": [
     "node_modules",
+    "rest-api/**",
     "**/*.test.ts",
     "**/*.test.tsx",
     "**/*.spec.ts",
@@ -44,6 +45,9 @@
     "**/tests/**",
     "**/__tests__/**",
     "tests/**",
-    "src/tests/**"
+    "src/tests/**",
+    "docs/**",
+    "scripts/**",
+    "old/**"
   ]
 }

@@ -25,7 +25,6 @@
 [Single Message]:
   Task("Research agent", "Analyze requirements and patterns...", "researcher")
   Task("Coder agent", "Implement core features...", "coder")
-  Task("Regression Tester", "Implement regression testing...", "regression-tester")
   Task("Tester agent", "Create comprehensive tests...", "tester")
   Task("Reviewer agent", "Review code quality...", "reviewer")
   Task("Architect agent", "Design system architecture...", "system-architect")
@@ -109,7 +108,7 @@ This project uses SPARC (Specification, Pseudocode, Architecture, Refinement, Co
 `backend-dev`, `mobile-dev`, `ml-developer`, `cicd-engineer`, `api-docs`, `system-architect`, `code-analyzer`, `base-template-generator`
 
 ### Testing & Validation
-`tdd-london-swarm`, `production-validator`, `regression-tester`
+`tdd-london-swarm`, `production-validator`
 
 ### Migration & Planning
 `migration-planner`, `swarm-init`
@@ -253,7 +252,6 @@ npx claude-flow@alpha hooks session-end --export-metrics true
   Task("Coder agent", "Implement REST endpoints with authentication. Coordinate via hooks.", "coder")
   Task("Database agent", "Design and implement database schema. Store decisions in memory.", "code-analyzer")
   Task("Tester agent", "Create comprehensive test suite with 90% coverage.", "tester")
-  Task("Regression Tester", "Create regression tests for any new bug fixes and features.", "regression-tester")
   Task("Reviewer agent", "Review code quality and security. Document findings.", "reviewer")
   
   // Batch ALL todos in ONE call

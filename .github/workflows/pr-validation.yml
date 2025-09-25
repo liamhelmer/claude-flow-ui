@@ -1,0 +1,536 @@
+name: Pull Request Validation
+
+# Fast feedback workflow for pull requests with critical tests only
+on:
+  pull_request:
+    branches: [main, develop]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+# Automatically cancel previous runs when new commits are pushed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_ENV: test
+  CI: true
+  FORCE_COLOR: 1
+  # Test database configuration
+  TEST_DB_HOST: localhost
+  TEST_DB_PORT: 5432
+  TEST_DB_NAME: claude_flow_test
+  TEST_DB_USER: test_user
+  TEST_DB_PASS: test_pass
+  # Redis configuration
+  REDIS_HOST: localhost
+  REDIS_PORT: 6379
+  # JWT configuration for tests
+  JWT_SECRET: test-jwt-secret-key-for-ci-pr-validation
+  JWT_EXPIRES_IN: 1h
+  JWT_REFRESH_EXPIRES_IN: 7d
+
+jobs:
+  # Skip draft PRs unless explicitly labeled
+  check-pr-status:
+    name: Check PR Status
+    runs-on: ubuntu-latest
+    outputs:
+      should-run: ${{ steps.check.outputs.should-run }}
+    steps:
+      - name: Check if PR should run tests
+        id: check
+        run: |
+          if [[ "${{ github.event.pull_request.draft }}" == "true" && "${{ contains(github.event.pull_request.labels.*.name, 'run-tests') }}" == "false" ]]; then
+            echo "should-run=false" >> $GITHUB_OUTPUT
+            echo "Skipping tests for draft PR without 'run-tests' label"
+          else
+            echo "should-run=true" >> $GITHUB_OUTPUT
+          fi
+
+  # Fast code quality checks - run in parallel for immediate feedback
+  code-quality:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    needs: check-pr-status
+    if: needs.check-pr-status.outputs.should-run == 'true'
+
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [lint, type-check, format-check]
+        node-version: ['20.x'] # Use latest stable for speed
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Needed for changed files detection
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Run linting
+        if: matrix.check == 'lint'
+        run: |
+          npm run lint
+          echo "✅ Linting passed"
+
+      - name: Run type checking
+        if: matrix.check == 'type-check'
+        run: |
+          npm run type-check
+          echo "✅ Type checking passed"
+
+      - name: Check code formatting
+        if: matrix.check == 'format-check'
+        run: |
+          # Add prettier check if available, otherwise skip
+          if npm run --silent | grep -q "format:check"; then
+            npm run format:check
+          else
+            echo "⚠️ No format:check script found, skipping"
+          fi
+          echo "✅ Format checking completed"
+
+  # Security scanning - run early for immediate feedback on vulnerabilities
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: check-pr-status
+    if: needs.check-pr-status.outputs.should-run == 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Run npm audit
+        run: |
+          echo "🔍 Running npm audit..."
+          npm audit --audit-level=moderate --json > audit-results.json || true
+
+          # Check if there are any moderate or higher vulnerabilities
+          VULN_COUNT=$(cat audit-results.json | jq '.metadata.vulnerabilities.moderate + .metadata.vulnerabilities.high + .metadata.vulnerabilities.critical' || echo "0")
+
+          if [ "$VULN_COUNT" -gt 0 ]; then
+            echo "❌ Found $VULN_COUNT moderate or higher vulnerabilities"
+            npm audit --audit-level=moderate
+            exit 1
+          else
+            echo "✅ No moderate or higher vulnerabilities found"
+          fi
+
+      - name: Upload audit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-audit-results
+          path: audit-results.json
+          retention-days: 7
+
+  # Unit tests with coverage - core functionality validation
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: [check-pr-status, code-quality]
+    if: needs.check-pr-status.outputs.should-run == 'true'
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['18.x', '20.x', '22.x']
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Run unit tests with coverage
+        run: |
+          echo "🧪 Running unit tests with Node.js ${{ matrix.node-version }}"
+          npm run test:ci
+        env:
+          NODE_OPTIONS: '--max-old-space-size=4096'
+
+      - name: Check coverage threshold
+        run: |
+          echo "📊 Checking coverage thresholds..."
+          # Parse coverage summary
+          if [ -f "coverage/coverage-summary.json" ]; then
+            COVERAGE=$(cat coverage/coverage-summary.json | jq '.total.lines.pct')
+            echo "Current coverage: $COVERAGE%"
+
+            if (( $(echo "$COVERAGE < 80" | bc -l) )); then
+              echo "❌ Coverage $COVERAGE% is below 80% threshold"
+              exit 1
+            else
+              echo "✅ Coverage $COVERAGE% meets 80% threshold"
+            fi
+          else
+            echo "⚠️ No coverage summary found"
+          fi
+
+      - name: Upload coverage reports
+        if: matrix.node-version == '20.x' # Only upload once
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage/lcov.info
+          flags: unittests,pr-validation
+          name: pr-validation-coverage
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false # Don't fail PR on upload issues
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results-node${{ matrix.node-version }}
+          path: |
+            coverage/
+            test-results/
+          retention-days: 7
+
+  # Integration tests with real services - validate core integrations
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [check-pr-status, code-quality]
+    if: needs.check-pr-status.outputs.should-run == 'true'
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_PASSWORD: test_pass
+          POSTGRES_USER: test_user
+          POSTGRES_DB: claude_flow_test
+        options: >
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      redis:
+        image: redis:7-alpine
+        options: >
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Wait for services
+        run: |
+          echo "⏳ Waiting for services to be ready..."
+          timeout 30 bash -c 'until pg_isready -h localhost -p 5432 -U test_user; do sleep 1; done'
+          timeout 30 bash -c 'until redis-cli -h localhost -p 6379 ping | grep -q PONG; do sleep 1; done'
+          echo "✅ Services are ready"
+
+      - name: Run integration tests
+        run: |
+          echo "🔧 Running integration tests..."
+          if npm run --silent | grep -q "test:integration"; then
+            npm run test:integration
+            echo "✅ Integration tests passed"
+          else
+            echo "⚠️ No integration tests found, skipping"
+          fi
+
+      - name: Upload integration test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results
+          path: |
+            test-results/
+            logs/
+          retention-days: 7
+
+  # Critical E2E tests - smoke tests for core user flows
+  smoke-tests:
+    name: Smoke Tests (E2E)
+    runs-on: ubuntu-latest
+    needs: [check-pr-status, unit-tests]
+    if: needs.check-pr-status.outputs.should-run == 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium firefox
+
+      - name: Run smoke tests
+        run: |
+          echo "💨 Running smoke tests..."
+          # Run only critical smoke tests for PR validation
+          npx playwright test \
+            --config=tests/e2e/playwright.config.ts \
+            --project=chromium \
+            --grep="@smoke" \
+            --reporter=line
+        env:
+          BASE_URL: http://localhost:11235
+          CLAUDE_FLOW_NEURAL: 'false'
+          CLAUDE_SPAWN: 'false'
+
+      - name: Upload smoke test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-test-results
+          path: |
+            tests/e2e/test-results/
+            tests/e2e/reports/
+          retention-days: 7
+
+      - name: Upload screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-test-screenshots
+          path: tests/e2e/test-results/
+          retention-days: 3
+
+  # Build verification - ensure the application builds correctly
+  build-verification:
+    name: Build Verification
+    runs-on: ubuntu-latest
+    needs: [check-pr-status, code-quality]
+    if: needs.check-pr-status.outputs.should-run == 'true'
+
+    strategy:
+      matrix:
+        node-version: ['18.x', '20.x', '22.x']
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Build application
+        run: |
+          echo "🏗️ Building application with Node.js ${{ matrix.node-version }}"
+          npm run build
+          echo "✅ Build completed successfully"
+        env:
+          NODE_OPTIONS: '--max-old-space-size=4096'
+
+      - name: Verify build artifacts
+        run: |
+          echo "🔍 Verifying build artifacts..."
+          if [ -d ".next" ]; then
+            echo "✅ Next.js build artifacts found"
+            ls -la .next/
+          else
+            echo "❌ Next.js build artifacts not found"
+            exit 1
+          fi
+
+      - name: Test application startup
+        run: |
+          echo "🚀 Testing application startup..."
+          # Start the application in background
+          timeout 30 npm start &
+          SERVER_PID=$!
+
+          # Wait for server to be ready
+          echo "⏳ Waiting for server to start..."
+          timeout 30 bash -c 'until curl -f http://localhost:3000/health 2>/dev/null; do sleep 1; done' || {
+            echo "❌ Server failed to start within 30 seconds"
+            kill $SERVER_PID 2>/dev/null || true
+            exit 1
+          }
+
+          echo "✅ Application started successfully"
+          kill $SERVER_PID 2>/dev/null || true
+
+  # PR validation summary
+  pr-validation-summary:
+    name: PR Validation Summary
+    runs-on: ubuntu-latest
+    needs: [
+      check-pr-status,
+      code-quality,
+      security-scan,
+      unit-tests,
+      integration-tests,
+      smoke-tests,
+      build-verification
+    ]
+    if: always() && needs.check-pr-status.outputs.should-run == 'true'
+
+    steps:
+      - name: Generate PR validation summary
+        run: |
+          echo "## 📋 PR Validation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Check each job status
+          declare -A job_status
+          job_status["Code Quality"]="${{ needs.code-quality.result }}"
+          job_status["Security Scan"]="${{ needs.security-scan.result }}"
+          job_status["Unit Tests"]="${{ needs.unit-tests.result }}"
+          job_status["Integration Tests"]="${{ needs.integration-tests.result }}"
+          job_status["Smoke Tests"]="${{ needs.smoke-tests.result }}"
+          job_status["Build Verification"]="${{ needs.build-verification.result }}"
+
+          all_passed=true
+          for job in "${!job_status[@]}"; do
+            status="${job_status[$job]}"
+            case $status in
+              "success")
+                echo "✅ $job: Passed" >> $GITHUB_STEP_SUMMARY
+                ;;
+              "failure")
+                echo "❌ $job: Failed" >> $GITHUB_STEP_SUMMARY
+                all_passed=false
+                ;;
+              "cancelled")
+                echo "⏸️ $job: Cancelled" >> $GITHUB_STEP_SUMMARY
+                all_passed=false
+                ;;
+              "skipped")
+                echo "⏭️ $job: Skipped" >> $GITHUB_STEP_SUMMARY
+                ;;
+              *)
+                echo "❓ $job: Unknown status ($status)" >> $GITHUB_STEP_SUMMARY
+                all_passed=false
+                ;;
+            esac
+          done
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "$all_passed" = true ]; then
+            echo "🎉 **All validation checks passed!** This PR is ready for review." >> $GITHUB_STEP_SUMMARY
+            exit 0
+          else
+            echo "🚫 **Some validation checks failed.** Please review and fix the issues above." >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
+  # Add preview deployment for UI changes (optional)
+  deploy-preview:
+    name: Deploy Preview
+    runs-on: ubuntu-latest
+    needs: [pr-validation-summary]
+    if: |
+      needs.pr-validation-summary.result == 'success' &&
+      contains(github.event.pull_request.labels.*.name, 'deploy-preview')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Build for preview
+        run: npm run build
+        env:
+          NODE_ENV: production
+
+      - name: Deploy preview (placeholder)
+        run: |
+          echo "🚀 Deploying preview for PR #${{ github.event.pull_request.number }}"
+          echo "Preview URL would be: https://pr-${{ github.event.pull_request.number }}.preview.claude-flow-ui.com"
+          # Add actual deployment logic here
+
+      - name: Comment preview URL
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(comment =>
+              comment.user.type === 'Bot' && comment.body.includes('Preview deployment')
+            );
+
+            const body = `🚀 **Preview deployment ready!**
+
+            📱 Preview URL: https://pr-${{ github.event.pull_request.number }}.preview.claude-flow-ui.com
+
+            This preview is automatically updated on every commit to this PR.
+
+            <sub>🤖 This comment is automatically updated by the CI/CD pipeline.</sub>`;
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+            }

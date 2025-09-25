@@ -1,0 +1,574 @@
+openapi: 3.0.0
+info:
+  title: Claude Flow UI API
+  version: 1.2.2
+  description: |
+    A modern web-based terminal and monitoring interface for Claude Flow with real-time system monitoring and tmux integration.
+
+    This API provides comprehensive terminal session management, WebSocket communications, data transformations,
+    and system monitoring capabilities.
+  contact:
+    name: Liam Helmer
+    email: liam@liamhelmer.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:3000
+    description: Development server
+  - url: http://localhost:8080
+    description: Production server
+
+paths:
+  /api/health:
+    get:
+      summary: Health Check
+      description: Returns the health status of the API and related services
+      tags:
+        - Health
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: "healthy"
+                timestamp: "2024-09-24T12:00:00.000Z"
+                uptime: 3600
+                services:
+                  websocket: "active"
+                  tmux: "available"
+
+  /api/sessions:
+    get:
+      summary: List Terminal Sessions
+      description: Retrieve all active terminal sessions
+      tags:
+        - Sessions
+      responses:
+        '200':
+          description: List of terminal sessions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TerminalSession'
+              example:
+                - id: "session-123"
+                  name: "terminal-1727180400"
+                  isActive: true
+                  lastActivity: "2024-09-24T12:00:00.000Z"
+    post:
+      summary: Create Terminal Session
+      description: Create a new terminal session
+      tags:
+        - Sessions
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSessionRequest'
+            example:
+              name: "my-session"
+              command: "bash"
+              cols: 80
+              rows: 24
+      responses:
+        '201':
+          description: Session created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TerminalSession'
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/sessions/{sessionId}:
+    get:
+      summary: Get Terminal Session
+      description: Retrieve details of a specific terminal session
+      tags:
+        - Sessions
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Unique session identifier
+      responses:
+        '200':
+          description: Session details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TerminalSession'
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      summary: Delete Terminal Session
+      description: Terminate and delete a terminal session
+      tags:
+        - Sessions
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Session deleted successfully
+        '404':
+          description: Session not found
+
+  /api/sessions/{sessionId}/resize:
+    post:
+      summary: Resize Terminal Session
+      description: Resize the terminal dimensions for a session
+      tags:
+        - Sessions
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResizeRequest'
+            example:
+              cols: 120
+              rows: 40
+      responses:
+        '200':
+          description: Session resized successfully
+        '404':
+          description: Session not found
+
+  /api/transformations:
+    get:
+      summary: List Available Transformations
+      description: Get all registered data transformations
+      tags:
+        - Transformations
+      responses:
+        '200':
+          description: List of available transformations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TransformationInfo'
+    post:
+      summary: Execute Transformation
+      description: Execute a data transformation
+      tags:
+        - Transformations
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransformationRequest'
+      responses:
+        '200':
+          description: Transformation executed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransformationResult'
+        '400':
+          description: Invalid transformation request
+
+  /api/transformations/{transformationId}/validate:
+    post:
+      summary: Validate Transformation Data
+      description: Validate input data against transformation requirements
+      tags:
+        - Transformations
+      parameters:
+        - name: transformationId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationResult'
+
+  /ws:
+    get:
+      summary: WebSocket Connection
+      description: |
+        WebSocket endpoint for real-time terminal communication.
+
+        **Connection URL**: `ws://localhost:3000/ws`
+
+        **Message Types**:
+        - `data`: Terminal input/output data
+        - `resize`: Resize terminal
+        - `create`: Create new session
+        - `destroy`: Destroy session
+        - `list`: List sessions
+        - `refresh-history`: Refresh terminal history
+      tags:
+        - WebSocket
+      responses:
+        '101':
+          description: WebSocket connection established
+        '400':
+          description: Invalid WebSocket request
+
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        timestamp:
+          type: string
+          format: date-time
+        uptime:
+          type: integer
+          description: Uptime in seconds
+        services:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - status
+        - timestamp
+
+    TerminalSession:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique session identifier
+        name:
+          type: string
+          description: Human-readable session name
+        isActive:
+          type: boolean
+          description: Whether the session is currently active
+        lastActivity:
+          type: string
+          format: date-time
+          description: Timestamp of last activity
+      required:
+        - id
+        - name
+        - isActive
+        - lastActivity
+
+    CreateSessionRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Optional session name
+        command:
+          type: string
+          description: Initial command to execute
+          default: bash
+        cols:
+          type: integer
+          description: Terminal columns
+          default: 80
+          minimum: 20
+          maximum: 500
+        rows:
+          type: integer
+          description: Terminal rows
+          default: 24
+          minimum: 10
+          maximum: 200
+
+    ResizeRequest:
+      type: object
+      properties:
+        cols:
+          type: integer
+          minimum: 20
+          maximum: 500
+        rows:
+          type: integer
+          minimum: 10
+          maximum: 200
+      required:
+        - cols
+        - rows
+
+    TransformationInfo:
+      type: object
+      properties:
+        name:
+          type: string
+        version:
+          type: string
+        description:
+          type: string
+        inputType:
+          type: string
+        outputType:
+          type: string
+        configSchema:
+          type: object
+      required:
+        - name
+        - version
+        - description
+
+    TransformationRequest:
+      type: object
+      properties:
+        transformationName:
+          type: string
+        data:
+          type: object
+          additionalProperties: true
+        config:
+          type: object
+          properties:
+            batchSize:
+              type: integer
+              default: 1000
+            parallel:
+              type: boolean
+              default: false
+            maxRetries:
+              type: integer
+              default: 3
+            timeout:
+              type: integer
+              default: 30000
+            preserveOriginal:
+              type: boolean
+              default: false
+      required:
+        - transformationName
+        - data
+
+    TransformationResult:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          additionalProperties: true
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/TransformationError'
+        warnings:
+          type: array
+          items:
+            type: string
+        metadata:
+          type: object
+          properties:
+            processed:
+              type: integer
+            skipped:
+              type: integer
+            failed:
+              type: integer
+            duration:
+              type: integer
+              description: Processing duration in milliseconds
+      required:
+        - success
+        - data
+        - errors
+        - warnings
+        - metadata
+
+    TransformationError:
+      type: object
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        severity:
+          type: string
+          enum: [error, warning, info]
+      required:
+        - code
+        - message
+        - severity
+
+    ValidationResult:
+      type: object
+      properties:
+        valid:
+          type: boolean
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/TransformationError'
+      required:
+        - valid
+        - errors
+
+    WebSocketMessage:
+      type: object
+      discriminator:
+        propertyName: type
+      properties:
+        type:
+          type: string
+          enum: [data, resize, create, destroy, list, refresh-history]
+        sessionId:
+          type: string
+        timestamp:
+          type: integer
+      required:
+        - type
+      oneOf:
+        - $ref: '#/components/schemas/DataMessage'
+        - $ref: '#/components/schemas/ResizeMessage'
+        - $ref: '#/components/schemas/CreateMessage'
+        - $ref: '#/components/schemas/DestroyMessage'
+        - $ref: '#/components/schemas/ListMessage'
+        - $ref: '#/components/schemas/RefreshMessage'
+
+    DataMessage:
+      allOf:
+        - $ref: '#/components/schemas/WebSocketMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: [data]
+            data:
+              type: string
+          required:
+            - sessionId
+            - data
+
+    ResizeMessage:
+      allOf:
+        - $ref: '#/components/schemas/WebSocketMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: [resize]
+            cols:
+              type: integer
+            rows:
+              type: integer
+          required:
+            - sessionId
+            - cols
+            - rows
+
+    CreateMessage:
+      allOf:
+        - $ref: '#/components/schemas/WebSocketMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: [create]
+            name:
+              type: string
+            command:
+              type: string
+
+    DestroyMessage:
+      allOf:
+        - $ref: '#/components/schemas/WebSocketMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: [destroy]
+          required:
+            - sessionId
+
+    ListMessage:
+      allOf:
+        - $ref: '#/components/schemas/WebSocketMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: [list]
+
+    RefreshMessage:
+      allOf:
+        - $ref: '#/components/schemas/WebSocketMessage'
+        - type: object
+          properties:
+            type:
+              type: string
+              enum: [refresh-history]
+          required:
+            - sessionId
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        code:
+          type: integer
+        details:
+          type: object
+          additionalProperties: true
+      required:
+        - error
+        - message
+
+tags:
+  - name: Health
+    description: Health check and system status
+  - name: Sessions
+    description: Terminal session management
+  - name: Transformations
+    description: Data transformation operations
+  - name: WebSocket
+    description: Real-time communication via WebSocket
+
+security:
+  - ApiKeyAuth: []
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Optional API key for authenticated requests

@@ -1,0 +1,334 @@
+name: Performance Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run performance tests daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      test_suite:
+        description: 'Test suite to run'
+        required: true
+        default: 'load'
+        type: choice
+        options:
+          - smoke
+          - load
+          - stress
+          - spike
+          - soak
+          - comprehensive
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'development'
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+      parallel_execution:
+        description: 'Run tests in parallel'
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  # Quick smoke test for PRs
+  smoke-test:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: Start application
+        run: |
+          npm run build:static
+          npm run server &
+          sleep 10
+          curl -f http://localhost:8080/api/health || exit 1
+
+      - name: Run k6 setup
+        run: npm run test:performance:k6:setup
+
+      - name: Run smoke tests
+        run: npm run test:performance:k6:smoke
+
+      - name: Upload test reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-test-reports
+          path: tests/performance/k6/reports/
+          retention-days: 30
+
+  # Standard load test for main branches
+  load-test:
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      matrix:
+        suite: [load, stress]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: Start application
+        run: |
+          npm run build:static
+          npm run server &
+          sleep 15
+          curl -f http://localhost:8080/api/health || exit 1
+
+      - name: Run k6 setup
+        run: npm run test:performance:k6:setup
+
+      - name: Run performance tests
+        run: npm run test:performance:k6:${{ matrix.suite }}
+
+      - name: Upload test reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ matrix.suite }}-test-reports
+          path: tests/performance/k6/reports/
+          retention-days: 30
+
+  # Scheduled comprehensive performance testing
+  scheduled-performance:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: Start application
+        run: |
+          npm run build:static
+          npm run server &
+          sleep 20
+          curl -f http://localhost:8080/api/health || exit 1
+
+      - name: Run k6 setup
+        run: npm run test:performance:k6:setup
+
+      - name: Run comprehensive performance tests
+        run: npm run test:performance:k6:comprehensive
+
+      - name: Upload test reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: comprehensive-test-reports-${{ github.run_id }}
+          path: tests/performance/k6/reports/
+          retention-days: 90
+
+      - name: Create performance summary
+        run: |
+          echo "# Daily Performance Test Results - $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "## Test Execution Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Date**: $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Reports Generated" >> $GITHUB_STEP_SUMMARY
+          find tests/performance/k6/reports -name "*.html" -type f -printf "- %f\n" >> $GITHUB_STEP_SUMMARY || true
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "- Review detailed reports in the artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "- Check for any performance regressions" >> $GITHUB_STEP_SUMMARY
+          echo "- Update performance baselines if needed" >> $GITHUB_STEP_SUMMARY
+
+  # Manual workflow dispatch
+  manual-performance:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: Start application
+        run: |
+          npm run build:static
+          npm run server &
+          sleep 20
+          curl -f http://localhost:8080/api/health || exit 1
+
+      - name: Run k6 setup
+        run: npm run test:performance:k6:setup
+
+      - name: Run performance tests
+        run: |
+          if [ "${{ github.event.inputs.parallel_execution }}" = "true" ]; then
+            node tests/performance/k6/scripts/run-k6-performance-tests.js ${{ github.event.inputs.test_suite }} --environment ${{ github.event.inputs.environment }} --parallel --verbose
+          else
+            node tests/performance/k6/scripts/run-k6-performance-tests.js ${{ github.event.inputs.test_suite }} --environment ${{ github.event.inputs.environment }} --verbose
+          fi
+
+      - name: Upload test reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: manual-${{ github.event.inputs.test_suite }}-${{ github.event.inputs.environment }}-reports
+          path: tests/performance/k6/reports/
+          retention-days: 30
+
+  # Performance regression analysis
+  regression-analysis:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: Start application
+        run: |
+          npm run build:static
+          npm run server &
+          sleep 15
+          curl -f http://localhost:8080/api/health || exit 1
+
+      - name: Run performance regression test
+        run: |
+          npm run test:performance:k6:setup
+          npm run test:performance:k6:load --tag "regression-test"
+
+      - name: Analyze performance trends
+        run: |
+          echo "# Performance Regression Analysis" >> $GITHUB_STEP_SUMMARY
+          echo "## Current Commit: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "## Previous Commit: ${{ github.event.before }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "Performance test completed. Check artifacts for detailed reports." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Action Items" >> $GITHUB_STEP_SUMMARY
+          echo "- Review response time trends" >> $GITHUB_STEP_SUMMARY
+          echo "- Check memory usage patterns" >> $GITHUB_STEP_SUMMARY
+          echo "- Validate error rate thresholds" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload regression analysis
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: regression-analysis-${{ github.sha }}
+          path: tests/performance/k6/reports/
+          retention-days: 60
+
+  # Cleanup old artifacts
+  cleanup:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    steps:
+      - name: Delete old artifacts
+        uses: geekyeggo/delete-artifact@v2
+        with:
+          name: |
+            smoke-test-reports
+            load-test-reports
+            stress-test-reports
+          failOnError: false
+          olderThan: '7 days'

@@ -1,0 +1,408 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy_env:
+        description: 'Deployment environment'
+        required: false
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  NODE_VERSION: '18'
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ============================================================================
+  # SETUP AND VALIDATION
+  # ============================================================================
+  setup:
+    name: Setup and Validate
+    runs-on: ubuntu-latest
+    outputs:
+      should-deploy: ${{ steps.check.outputs.should-deploy }}
+      version: ${{ steps.version.outputs.version }}
+      cache-key: ${{ steps.cache-key.outputs.key }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Generate cache key
+        id: cache-key
+        run: |
+          echo "key=deps-${{ runner.os }}-${{ env.NODE_VERSION }}-${{ hashFiles('**/package-lock.json') }}" >> $GITHUB_OUTPUT
+
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.npm
+            node_modules
+            */*/node_modules
+          key: ${{ steps.cache-key.outputs.key }}
+          restore-keys: |
+            deps-${{ runner.os }}-${{ env.NODE_VERSION }}-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint and type check
+        run: |
+          npm run lint
+          npm run typecheck
+
+      - name: Check deployment conditions
+        id: check
+        run: |
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "should-deploy=true" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "should-deploy=true" >> $GITHUB_OUTPUT
+          else
+            echo "should-deploy=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            echo "version=v$(date +%Y%m%d)-${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
+          else
+            echo "version=pr-${{ github.event.number }}-${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
+          fi
+
+  # ============================================================================
+  # PARALLEL TEST EXECUTION
+  # ============================================================================
+  test-unit:
+    name: Unit Tests
+    needs: setup
+    uses: ./.github/workflows/test-unit.yml
+    with:
+      cache-key: ${{ needs.setup.outputs.cache-key }}
+    secrets: inherit
+
+  test-integration:
+    name: Integration Tests
+    needs: setup
+    uses: ./.github/workflows/test-integration.yml
+    with:
+      cache-key: ${{ needs.setup.outputs.cache-key }}
+    secrets: inherit
+
+  test-e2e:
+    name: E2E Tests
+    needs: setup
+    uses: ./.github/workflows/test-e2e.yml
+    with:
+      cache-key: ${{ needs.setup.outputs.cache-key }}
+    secrets: inherit
+
+  test-performance:
+    name: Performance Tests
+    needs: setup
+    uses: ./.github/workflows/test-performance.yml
+    with:
+      cache-key: ${{ needs.setup.outputs.cache-key }}
+    secrets: inherit
+
+  test-security:
+    name: Security Tests
+    needs: setup
+    uses: ./.github/workflows/test-security.yml
+    with:
+      cache-key: ${{ needs.setup.outputs.cache-key }}
+    secrets: inherit
+
+  # ============================================================================
+  # TEST RESULTS AGGREGATION
+  # ============================================================================
+  test-results:
+    name: Aggregate Test Results
+    runs-on: ubuntu-latest
+    needs: [test-unit, test-integration, test-e2e, test-performance, test-security]
+    if: always()
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all test artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: test-results
+
+      - name: Aggregate test results
+        run: |
+          echo "## Test Results Summary" > test-summary.md
+          echo "" >> test-summary.md
+
+          # Process each test type
+          for test_type in unit integration e2e performance security; do
+            echo "### ${test_type^} Tests" >> test-summary.md
+            if [[ -d "test-results/test-results-$test_type" ]]; then
+              if [[ -f "test-results/test-results-$test_type/results.json" ]]; then
+                echo "✅ Passed" >> test-summary.md
+              else
+                echo "❌ Failed" >> test-summary.md
+              fi
+            else
+              echo "⚠️ Not executed" >> test-summary.md
+            fi
+            echo "" >> test-summary.md
+          done
+
+      - name: Comment PR with results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('test-summary.md', 'utf8');
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });
+
+      - name: Upload aggregated results
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-results-summary
+          path: |
+            test-summary.md
+            test-results/
+          retention-days: 30
+
+  # ============================================================================
+  # BUILD AND CONTAINERIZATION
+  # ============================================================================
+  build:
+    name: Build Application
+    runs-on: ubuntu-latest
+    needs: [setup, test-results]
+    if: needs.test-results.result == 'success'
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Restore dependencies cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.npm
+            node_modules
+            */*/node_modules
+          key: ${{ needs.setup.outputs.cache-key }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build application
+        run: npm run build
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Container Registry
+        if: needs.setup.outputs.should-deploy == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=raw,value=${{ needs.setup.outputs.version }}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ needs.setup.outputs.should-deploy == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: build-artifacts
+          path: |
+            dist/
+            build/
+          retention-days: 7
+
+  # ============================================================================
+  # DEPLOYMENT
+  # ============================================================================
+  deploy:
+    name: Deploy Application
+    needs: [setup, build]
+    if: needs.setup.outputs.should-deploy == 'true'
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: ${{ github.event.inputs.deploy_env || 'staging' }}
+      image-digest: ${{ needs.build.outputs.image-digest }}
+      version: ${{ needs.setup.outputs.version }}
+    secrets: inherit
+
+  # ============================================================================
+  # POST-DEPLOYMENT VERIFICATION
+  # ============================================================================
+  verify-deployment:
+    name: Verify Deployment
+    runs-on: ubuntu-latest
+    needs: [deploy]
+    if: needs.deploy.result == 'success'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Run smoke tests
+        run: |
+          # Add smoke test commands here
+          echo "Running smoke tests against deployed application..."
+          # npm run test:smoke
+
+      - name: Health check
+        run: |
+          # Add health check commands
+          echo "Performing health checks..."
+          # curl -f $DEPLOYMENT_URL/health
+
+  # ============================================================================
+  # ROLLBACK ON FAILURE
+  # ============================================================================
+  rollback:
+    name: Rollback on Failure
+    needs: [deploy, verify-deployment]
+    if: failure() && needs.deploy.result == 'success'
+    uses: ./.github/workflows/rollback.yml
+    with:
+      environment: ${{ github.event.inputs.deploy_env || 'staging' }}
+    secrets: inherit
+
+  # ============================================================================
+  # NOTIFICATIONS
+  # ============================================================================
+  notify:
+    name: Send Notifications
+    runs-on: ubuntu-latest
+    needs: [setup, test-results, build, deploy, verify-deployment]
+    if: always()
+    steps:
+      - name: Determine status
+        id: status
+        run: |
+          if [[ "${{ needs.verify-deployment.result }}" == "success" ]]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "message=✅ Deployment successful" >> $GITHUB_OUTPUT
+          elif [[ "${{ needs.test-results.result }}" == "failure" ]]; then
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo "message=❌ Tests failed" >> $GITHUB_OUTPUT
+          elif [[ "${{ needs.build.result }}" == "failure" ]]; then
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo "message=❌ Build failed" >> $GITHUB_OUTPUT
+          elif [[ "${{ needs.deploy.result }}" == "failure" ]]; then
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo "message=❌ Deployment failed" >> $GITHUB_OUTPUT
+          else
+            echo "status=warning" >> $GITHUB_OUTPUT
+            echo "message=⚠️ Pipeline completed with warnings" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Notify Slack
+        if: always() && steps.status.outputs.status == 'failure'
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_MESSAGE: |
+            ${{ steps.status.outputs.message }}
+            Repository: ${{ github.repository }}
+            Branch: ${{ github.ref_name }}
+            Commit: ${{ github.sha }}
+            Author: ${{ github.actor }}
+          SLACK_COLOR: ${{ steps.status.outputs.status == 'success' && 'good' || 'danger' }}
+
+      - name: Create GitHub issue on failure
+        if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const title = `CI/CD Pipeline Failure - ${new Date().toISOString()}`;
+            const body = `
+            ## Pipeline Failure Report
+
+            **Workflow:** ${context.workflow}
+            **Run ID:** ${context.runId}
+            **Commit:** ${context.sha}
+            **Author:** ${context.actor}
+            **Branch:** ${context.ref}
+
+            **Status:**
+            - Setup: ${{ needs.setup.result }}
+            - Tests: ${{ needs.test-results.result }}
+            - Build: ${{ needs.build.result }}
+            - Deploy: ${{ needs.deploy.result }}
+
+            Please investigate and resolve the issues.
+
+            [View Workflow Run](${context.payload.repository.html_url}/actions/runs/${context.runId})
+            `;
+
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['bug', 'ci/cd', 'high-priority']
+            });

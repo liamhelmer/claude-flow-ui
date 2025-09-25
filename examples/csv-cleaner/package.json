@@ -1,0 +1,26 @@
+{
+  "name": "csv-cleaner-example",
+  "version": "1.0.0",
+  "description": "Batch processing example for cleaning and validating CSV customer data",
+  "main": "src/csv-cleaner.js",
+  "scripts": {
+    "start": "node src/csv-cleaner.js",
+    "test": "jest",
+    "lint": "eslint src/",
+    "clean": "rm -rf cleaned errors logs",
+    "sample": "node src/csv-cleaner.js data/sample-customers.csv config/cleaner-config.json"
+  },
+  "keywords": ["csv", "data-cleaning", "batch-processing", "validation", "etl"],
+  "author": "Claude Flow UI",
+  "license": "MIT",
+  "dependencies": {
+    "csv-parser": "^3.0.0"
+  },
+  "devDependencies": {
+    "jest": "^29.0.0",
+    "eslint": "^8.0.0"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}

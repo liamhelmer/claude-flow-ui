@@ -1,0 +1,112 @@
+# Dependabot configuration for automated dependency updates
+# This file configures Dependabot to automatically create PRs for dependency updates
+
+version: 2
+updates:
+  # NPM dependencies in root
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "@liamhelmer"
+    assignees:
+      - "@liamhelmer"
+    labels:
+      - "dependencies"
+      - "automated"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    # Group related updates
+    groups:
+      production-dependencies:
+        patterns:
+          - "@*"
+          - "next"
+          - "react"
+          - "react-dom"
+          - "express"
+          - "socket.io*"
+          - "@xterm/*"
+          - "typescript"
+        update-types:
+          - "minor"
+          - "patch"
+      development-dependencies:
+        patterns:
+          - "@playwright/*"
+          - "@testing-library/*"
+          - "jest*"
+          - "eslint*"
+          - "@types/*"
+          - "playwright"
+          - "lighthouse"
+        update-types:
+          - "minor"
+          - "patch"
+      security-updates:
+        patterns:
+          - "*"
+        update-types:
+          - "patch"
+    # Ignore specific updates if needed
+    ignore:
+      # Ignore major version updates for critical dependencies
+      # - dependency-name: "next"
+      #   update-types: ["version-update:semver-major"]
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "07:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 3
+    reviewers:
+      - "@liamhelmer"
+    assignees:
+      - "@liamhelmer"
+    labels:
+      - "github-actions"
+      - "dependencies"
+      - "automated"
+    commit-message:
+      prefix: "chore(ci)"
+      include: "scope"
+    # Group all GitHub Actions updates
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+        update-types:
+          - "major"
+          - "minor"
+          - "patch"
+
+  # Docker dependencies (if any)
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "06:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 2
+    reviewers:
+      - "@liamhelmer"
+    assignees:
+      - "@liamhelmer"
+    labels:
+      - "docker"
+      - "dependencies"
+      - "automated"
+    commit-message:
+      prefix: "chore(docker)"
+      include: "scope"

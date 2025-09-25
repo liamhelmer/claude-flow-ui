@@ -1,0 +1,32 @@
+{
+  "batchSize": 1000,
+  "outputDir": "./cleaned",
+  "errorDir": "./errors",
+  "duplicateHandling": "remove",
+  "validationRules": {
+    "email": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$",
+    "phone": "^\\+?[\\d\\s\\-\\(\\)]{10,}$",
+    "required": ["email", "firstName", "lastName"]
+  },
+  "transformations": {
+    "email": "lowercase",
+    "phone": "standardize",
+    "name": "titlecase"
+  },
+  "dataQuality": {
+    "maxAge": 150,
+    "minAge": 0,
+    "phoneFormats": ["US", "international"],
+    "addressNormalization": true
+  },
+  "performance": {
+    "memoryLimit": "512MB",
+    "concurrentFiles": 3,
+    "streamingThreshold": 10000
+  },
+  "logging": {
+    "level": "info",
+    "logFile": "./logs/csv-cleaner.log",
+    "errorDetails": true
+  }
+}

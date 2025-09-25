@@ -51,6 +51,52 @@ claude-flow-ui [--port <number>] [claude-flow-args...]
 - `--port <number>`: Specify port (default: 11235)
 - `claude-flow-args`: Any arguments to pass to claude-flow
 
+### Environment Variables (NEW!)
+
+Configure both server and claude-flow options using environment variables:
+
+```bash
+# Server configuration
+export PORT=3000
+export TERMINAL_SIZE=140x50
+
+# Claude Flow configuration
+export CLAUDE_FLOW_ALPHA=true        # Use alpha version
+export CLAUDE_FLOW_MODE=sparc
+export CLAUDE_FLOW_PROMPT="Build a REST API"
+export CLAUDE_FLOW_NEURAL=true
+export CLAUDE_FLOW_INIT=github
+
+# Run UI - automatically uses env vars
+npm run claude-flow-ui
+```
+
+Available environment variables:
+
+**Server Configuration:**
+- `PORT`: UI server port (default: 8080)
+- `TERMINAL_SIZE`: Terminal dimensions as `{cols}x{rows}` (default: 120x40)
+
+**Claude Flow Configuration:**
+- `CLAUDE_FLOW_ALPHA`: Use alpha version (`true`/`false`, default: `false`)
+- `CLAUDE_FLOW_MODE`: First argument/mode for claude-flow
+- `CLAUDE_FLOW_SUBCOMMAND`: Subcommand after mode (e.g., `tdd`, `run`, `batch`)
+- `CLAUDE_FLOW_PROMPT`: Task description (automatically quoted)
+- `CLAUDE_FLOW_ARGUMENTS`: Additional arguments after prompt
+- `CLAUDE_FLOW_TIMEOUT`: Timeout in seconds for operations
+- `CLAUDE_FLOW_NEURAL`: Set to `true` to enable neural mode
+- `CLAUDE_SPAWN`: Agent spawning (`true` for --claude, `auto` for --auto-spawn)
+- `CLAUDE_FLOW_INIT`: Run init commands (`true`, `force`, `github`, or `auto` - NEW!)
+
+**Hive Mind Configuration:**
+- `HIVE_CONSENSUS_TYPE`: Consensus algorithm (`majority`, `unanimous`, `byzantine`, etc.)
+- `HIVE_QUEEN_TYPE`: Queen coordinator type (`strategic`, `tactical`, `adaptive`, `democratic`)
+- `AUTO_SCALE_AGENTS`: Enable auto-scaling (`true` to enable)
+- `HIVE_LOG_LEVEL`: Log level (`error`, `warn`, `info`, `debug` - debug also adds --verbose)
+- `HIVE_MEMORY_SIZE`: Memory allocation for hive system
+
+See [docs/ENVIRONMENT_VARIABLES.md](docs/ENVIRONMENT_VARIABLES.md) for full documentation.
+
 ### Examples
 
 ```bash
@@ -68,6 +114,12 @@ npm run claude-flow-ui -- --port 3000 swarm \
   --objective "Create API" \
   --model claude-3-opus \
   --max-agents 10
+
+# NEW: Auto-initialize claude-flow in new projects
+CLAUDE_FLOW_INIT=auto npm run claude-flow-ui
+
+# Auto-init with alpha version
+CLAUDE_FLOW_INIT=auto CLAUDE_FLOW_ALPHA=true npm run claude-flow-ui
 ```
 
 ### Port Selection Logic

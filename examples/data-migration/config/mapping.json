@@ -1,0 +1,46 @@
+{
+  "source": {
+    "customer_id": { "type": "number", "required": true },
+    "first_name": { "type": "text", "required": true },
+    "last_name": { "type": "text", "required": true },
+    "email_address": { "type": "email", "required": true },
+    "phone_number": { "type": "phone", "required": false },
+    "birth_date": { "type": "date", "required": false },
+    "registration_date": { "type": "date", "required": true },
+    "account_balance": { "type": "number", "required": false },
+    "is_active": { "type": "boolean", "required": true }
+  },
+  "target": {
+    "id": { "type": "number", "required": true },
+    "firstName": { "type": "text", "required": true },
+    "lastName": { "type": "text", "required": true },
+    "email": { "type": "email", "required": true },
+    "phone": { "type": "phone", "required": false },
+    "birthDate": { "type": "date", "required": false },
+    "createdAt": { "type": "date", "required": true },
+    "balance": { "type": "number", "required": false },
+    "active": { "type": "boolean", "required": true }
+  },
+  "fieldMapping": {
+    "customer_id": "id",
+    "first_name": "firstName",
+    "last_name": "lastName",
+    "email_address": "email",
+    "phone_number": "phone",
+    "birth_date": "birthDate",
+    "registration_date": "createdAt",
+    "account_balance": "balance",
+    "is_active": "active"
+  },
+  "transformations": {
+    "dateFormat": "ISO",
+    "phoneFormat": "international",
+    "emailNormalization": "lowercase",
+    "nameFormatting": "titlecase"
+  },
+  "validation": {
+    "strictMode": false,
+    "skipInvalidRecords": true,
+    "logErrors": true
+  }
+}

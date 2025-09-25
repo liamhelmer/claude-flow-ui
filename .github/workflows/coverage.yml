@@ -1,0 +1,245 @@
+name: Coverage Collection and Reporting
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run coverage analysis nightly
+    - cron: '0 2 * * *'
+
+jobs:
+  coverage:
+    name: Comprehensive Coverage Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: |
+        npm ci
+        npx playwright install --with-deps chromium
+
+    - name: Install coverage tools
+      run: |
+        npm install --save-dev nyc c8 istanbul-lib-coverage istanbul-lib-report istanbul-reports jest-junit jest-sonar-reporter
+
+    - name: Create coverage directories
+      run: |
+        mkdir -p coverage/{jest,playwright,merged,reports,analysis}
+        mkdir -p test-results
+
+    - name: Run comprehensive coverage collection
+      run: |
+        npm run test:coverage:ci
+      env:
+        CI: true
+        NODE_ENV: test
+        COVERAGE_ENABLED: true
+        # Coverage thresholds
+        COVERAGE_LINES_THRESHOLD: 80
+        COVERAGE_BRANCHES_THRESHOLD: 75
+        COVERAGE_FUNCTIONS_THRESHOLD: 80
+        COVERAGE_STATEMENTS_THRESHOLD: 80
+
+    - name: Upload coverage reports to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        files: ./coverage/merged/lcov.info,./coverage/jest/lcov.info
+        directory: ./coverage
+        flags: unittests,e2e,merged
+        name: claude-flow-ui-coverage
+        fail_ci_if_error: false
+        verbose: true
+
+    - name: Upload coverage to Coveralls
+      uses: coverallsapp/github-action@v2
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        path-to-lcov: ./coverage/merged/lcov.info
+        flag-name: ${{ matrix.node-version }}
+        parallel: true
+
+    - name: Generate coverage badges
+      run: |
+        npm run test:coverage:badges
+
+    - name: Upload coverage badges
+      if: github.ref == 'refs/heads/main' && matrix.node-version == '20.x'
+      run: |
+        # Create badges branch if it doesn't exist
+        git config --global user.name 'github-actions[bot]'
+        git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+
+        # Check if badges branch exists
+        if git ls-remote --heads origin badges | grep -q badges; then
+          git fetch origin badges
+          git checkout badges
+        else
+          git checkout --orphan badges
+          git rm -rf .
+        fi
+
+        # Copy badges
+        cp coverage/reports/badges/*.svg .
+
+        # Commit and push badges
+        git add *.svg
+        git commit -m "Update coverage badges [skip ci]" || exit 0
+        git push origin badges
+
+    - name: Comment coverage on PR
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const path = './coverage/reports/coverage-report.md';
+
+          if (fs.existsSync(path)) {
+            const coverage = fs.readFileSync(path, 'utf8');
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## Coverage Report\n\n${coverage}`
+            });
+          }
+
+    - name: Upload coverage artifacts
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: coverage-report-${{ matrix.node-version }}
+        path: |
+          coverage/
+          test-results/
+        retention-days: 30
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: test-results-${{ matrix.node-version }}
+        path: |
+          coverage/jest/junit.xml
+          coverage/reports/coverage-report.json
+          coverage/analysis/coverage-analysis.json
+        retention-days: 7
+
+    - name: Publish test results
+      uses: dorny/test-reporter@v1
+      if: always()
+      with:
+        name: Coverage Tests (${{ matrix.node-version }})
+        path: 'coverage/jest/junit.xml'
+        reporter: jest-junit
+        fail-on-error: false
+
+  coverage-summary:
+    name: Coverage Summary
+    needs: coverage
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+    - name: Finalize parallel coverage uploads
+      uses: coverallsapp/github-action@v2
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        parallel-finished: true
+
+    - name: Download coverage artifacts
+      uses: actions/download-artifact@v4
+      with:
+        pattern: coverage-report-*
+        merge-multiple: true
+
+    - name: Generate coverage summary
+      run: |
+        echo "## Coverage Summary" >> $GITHUB_STEP_SUMMARY
+
+        if [ -f "coverage/reports/coverage-report.md" ]; then
+          cat coverage/reports/coverage-report.md >> $GITHUB_STEP_SUMMARY
+        else
+          echo "Coverage report not available" >> $GITHUB_STEP_SUMMARY
+        fi
+
+        echo "## Coverage Badges" >> $GITHUB_STEP_SUMMARY
+        echo "![Lines Coverage](https://img.shields.io/badge/dynamic/json?color=brightgreen&label=lines&query=%24.lines&suffix=%25&url=https%3A%2F%2Fraw.githubusercontent.com%2Fliamhelmer%2Fclaude-flow-ui%2Fbadges%2Fcoverage-lines.json)" >> $GITHUB_STEP_SUMMARY
+        echo "![Branches Coverage](https://img.shields.io/badge/dynamic/json?color=brightgreen&label=branches&query=%24.branches&suffix=%25&url=https%3A%2F%2Fraw.githubusercontent.com%2Fliamhelmer%2Fclaude-flow-ui%2Fbadges%2Fcoverage-branches.json)" >> $GITHUB_STEP_SUMMARY
+        echo "![Functions Coverage](https://img.shields.io/badge/dynamic/json?color=brightgreen&label=functions&query=%24.functions&suffix=%25&url=https%3A%2F%2Fraw.githubusercontent.com%2Fliamhelmer%2Fclaude-flow-ui%2Fbadges%2Fcoverage-functions.json)" >> $GITHUB_STEP_SUMMARY
+        echo "![Statements Coverage](https://img.shields.io/badge/dynamic/json?color=brightgreen&label=statements&query=%24.statements&suffix=%25&url=https%3A%2F%2Fraw.githubusercontent.com%2Fliamhelmer%2Fclaude-flow-ui%2Fbadges%2Fcoverage-statements.json)" >> $GITHUB_STEP_SUMMARY
+
+  security-scan:
+    name: Security Coverage Analysis
+    runs-on: ubuntu-latest
+    needs: coverage
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download coverage artifacts
+      uses: actions/download-artifact@v4
+      with:
+        pattern: coverage-report-*
+        merge-multiple: true
+
+    - name: Run CodeQL analysis with coverage context
+      uses: github/codeql-action/analyze@v3
+      with:
+        languages: javascript
+        config-file: |
+          name: "Coverage-aware security analysis"
+          queries:
+            - uses: security-and-quality
+            - uses: security-extended
+          paths-ignore:
+            - coverage/
+            - node_modules/
+            - .next/
+
+    - name: Security coverage gap analysis
+      run: |
+        if [ -f "coverage/analysis/coverage-analysis.json" ]; then
+          echo "Analyzing security coverage gaps..."
+          node -e "
+            const analysis = require('./coverage/analysis/coverage-analysis.json');
+            const criticalFiles = analysis.hotspots.mostCritical || [];
+            const lowCoverage = criticalFiles.filter(f => f.metrics.lines.pct < 60);
+
+            if (lowCoverage.length > 0) {
+              console.log('⚠️ Security-critical files with low coverage:');
+              lowCoverage.forEach(f => {
+                console.log(\`  - \${f.filePath}: \${f.metrics.lines.pct.toFixed(1)}% coverage\`);
+              });
+
+              // Create security issue if needed
+              if (lowCoverage.length > 5) {
+                console.log('::warning::Multiple security-critical files have insufficient test coverage');
+              }
+            } else {
+              console.log('✅ No security coverage gaps detected');
+            }
+          "
+        fi

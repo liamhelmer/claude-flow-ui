@@ -1,0 +1,102 @@
+[
+  {
+    "orderId": "ORD-001",
+    "customerId": "CUST-101",
+    "productId": "PROD-201",
+    "date": "2024-10-01T10:30:00Z",
+    "amount": 299.99,
+    "quantity": 1,
+    "status": "completed",
+    "paymentMethod": "credit_card"
+  },
+  {
+    "orderId": "ORD-002",
+    "customerId": "CUST-102",
+    "productId": "PROD-202",
+    "date": "2024-10-01T14:15:00Z",
+    "amount": 149.50,
+    "quantity": 2,
+    "status": "completed",
+    "paymentMethod": "paypal"
+  },
+  {
+    "orderId": "ORD-003",
+    "customerId": "CUST-103",
+    "productId": "PROD-201",
+    "date": "2024-10-02T09:45:00Z",
+    "amount": 299.99,
+    "quantity": 1,
+    "status": "completed",
+    "paymentMethod": "credit_card"
+  },
+  {
+    "orderId": "ORD-004",
+    "customerId": "CUST-101",
+    "productId": "PROD-203",
+    "date": "2024-10-02T16:20:00Z",
+    "amount": 89.99,
+    "quantity": 3,
+    "status": "completed",
+    "paymentMethod": "debit_card"
+  },
+  {
+    "orderId": "ORD-005",
+    "customerId": "CUST-104",
+    "productId": "PROD-202",
+    "date": "2024-10-03T11:10:00Z",
+    "amount": 149.50,
+    "quantity": 1,
+    "status": "pending",
+    "paymentMethod": "bank_transfer"
+  },
+  {
+    "orderId": "ORD-006",
+    "customerId": "CUST-105",
+    "productId": "PROD-204",
+    "date": "2024-10-03T13:30:00Z",
+    "amount": 459.99,
+    "quantity": 1,
+    "status": "completed",
+    "paymentMethod": "credit_card"
+  },
+  {
+    "orderId": "ORD-007",
+    "customerId": "CUST-106",
+    "productId": "PROD-201",
+    "date": "2024-10-04T08:15:00Z",
+    "amount": 299.99,
+    "quantity": 2,
+    "status": "completed",
+    "paymentMethod": "paypal"
+  },
+  {
+    "orderId": "ORD-008",
+    "customerId": "CUST-102",
+    "productId": "PROD-205",
+    "date": "2024-10-04T15:45:00Z",
+    "amount": 199.99,
+    "quantity": 1,
+    "status": "completed",
+    "paymentMethod": "credit_card"
+  },
+  {
+    "orderId": "ORD-009",
+    "customerId": "CUST-107",
+    "productId": "PROD-203",
+    "date": "2024-10-05T12:20:00Z",
+    "amount": 89.99,
+    "quantity": 4,
+    "status": "completed",
+    "paymentMethod": "debit_card"
+  },
+  {
+    "orderId": "ORD-010",
+    "customerId": "CUST-103",
+    "productId": "PROD-206",
+    "date": "2024-10-05T17:30:00Z",
+    "amount": 349.99,
+    "quantity": 1,
+    "status": "completed",
+    "paymentMethod": "credit_card"
+  }
+]

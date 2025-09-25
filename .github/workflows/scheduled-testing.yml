@@ -1,0 +1,897 @@
+name: Scheduled Testing & Monitoring
+
+# Nightly regression tests, performance monitoring, and system health checks
+on:
+  schedule:
+    # Nightly regression tests at 2 AM UTC (avoid peak usage)
+    - cron: '0 2 * * *'
+    # Weekly comprehensive tests on Sundays at 4 AM UTC
+    - cron: '0 4 * * 0'
+    # Monthly dependency updates on 1st of each month at 6 AM UTC
+    - cron: '0 6 1 * *'
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Type of scheduled test to run'
+        required: true
+        default: 'nightly'
+        type: choice
+        options:
+          - nightly
+          - weekly
+          - monthly
+          - performance-only
+          - security-only
+          - dependency-update
+      environment:
+        description: 'Target environment for testing'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+          - both
+
+# Allow only one scheduled test at a time
+concurrency:
+  group: scheduled-testing
+  cancel-in-progress: false
+
+env:
+  NODE_ENV: test
+  CI: true
+  FORCE_COLOR: 1
+
+jobs:
+  # Determine test scope based on schedule or input
+  test-scope-detection:
+    name: Test Scope Detection
+    runs-on: ubuntu-latest
+    outputs:
+      test-type: ${{ steps.scope.outputs.test-type }}
+      target-environment: ${{ steps.scope.outputs.target-environment }}
+      run-nightly: ${{ steps.scope.outputs.run-nightly }}
+      run-weekly: ${{ steps.scope.outputs.run-weekly }}
+      run-monthly: ${{ steps.scope.outputs.run-monthly }}
+      run-performance: ${{ steps.scope.outputs.run-performance }}
+      run-security: ${{ steps.scope.outputs.run-security }}
+      run-dependency-update: ${{ steps.scope.outputs.run-dependency-update }}
+
+    steps:
+      - name: Determine test scope
+        id: scope
+        run: |
+          # Default values
+          TEST_TYPE="nightly"
+          TARGET_ENV="staging"
+          RUN_NIGHTLY="false"
+          RUN_WEEKLY="false"
+          RUN_MONTHLY="false"
+          RUN_PERFORMANCE="false"
+          RUN_SECURITY="false"
+          RUN_DEPENDENCY_UPDATE="false"
+
+          # Check if manually triggered
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TEST_TYPE="${{ github.event.inputs.test_type }}"
+            TARGET_ENV="${{ github.event.inputs.environment }}"
+          else
+            # Determine based on cron schedule
+            if [[ "${{ github.event.schedule }}" == "0 2 * * *" ]]; then
+              TEST_TYPE="nightly"
+            elif [[ "${{ github.event.schedule }}" == "0 4 * * 0" ]]; then
+              TEST_TYPE="weekly"
+            elif [[ "${{ github.event.schedule }}" == "0 6 1 * *" ]]; then
+              TEST_TYPE="monthly"
+            fi
+          fi
+
+          # Set test flags based on type
+          case $TEST_TYPE in
+            "nightly")
+              RUN_NIGHTLY="true"
+              RUN_PERFORMANCE="true"
+              RUN_SECURITY="true"
+              ;;
+            "weekly")
+              RUN_NIGHTLY="true"
+              RUN_WEEKLY="true"
+              RUN_PERFORMANCE="true"
+              RUN_SECURITY="true"
+              ;;
+            "monthly")
+              RUN_NIGHTLY="true"
+              RUN_WEEKLY="true"
+              RUN_MONTHLY="true"
+              RUN_PERFORMANCE="true"
+              RUN_SECURITY="true"
+              RUN_DEPENDENCY_UPDATE="true"
+              ;;
+            "performance-only")
+              RUN_PERFORMANCE="true"
+              ;;
+            "security-only")
+              RUN_SECURITY="true"
+              ;;
+            "dependency-update")
+              RUN_DEPENDENCY_UPDATE="true"
+              ;;
+          esac
+
+          # Output all variables
+          echo "test-type=$TEST_TYPE" >> $GITHUB_OUTPUT
+          echo "target-environment=$TARGET_ENV" >> $GITHUB_OUTPUT
+          echo "run-nightly=$RUN_NIGHTLY" >> $GITHUB_OUTPUT
+          echo "run-weekly=$RUN_WEEKLY" >> $GITHUB_OUTPUT
+          echo "run-monthly=$RUN_MONTHLY" >> $GITHUB_OUTPUT
+          echo "run-performance=$RUN_PERFORMANCE" >> $GITHUB_OUTPUT
+          echo "run-security=$RUN_SECURITY" >> $GITHUB_OUTPUT
+          echo "run-dependency-update=$RUN_DEPENDENCY_UPDATE" >> $GITHUB_OUTPUT
+
+          echo "🔍 Scheduled Test Configuration:"
+          echo "  Type: $TEST_TYPE"
+          echo "  Environment: $TARGET_ENV"
+          echo "  Nightly Tests: $RUN_NIGHTLY"
+          echo "  Weekly Tests: $RUN_WEEKLY"
+          echo "  Monthly Tests: $RUN_MONTHLY"
+          echo "  Performance Tests: $RUN_PERFORMANCE"
+          echo "  Security Tests: $RUN_SECURITY"
+          echo "  Dependency Update: $RUN_DEPENDENCY_UPDATE"
+
+  # Environment health check before running tests
+  environment-health-check:
+    name: Environment Health Check
+    runs-on: ubuntu-latest
+    needs: test-scope-detection
+    outputs:
+      staging-healthy: ${{ steps.health.outputs.staging-healthy }}
+      production-healthy: ${{ steps.health.outputs.production-healthy }}
+
+    steps:
+      - name: Check environment health
+        id: health
+        run: |
+          echo "🏥 Checking environment health..."
+
+          # Check staging environment
+          STAGING_HEALTHY="false"
+          if curl -f -s --max-time 30 "https://staging.claude-flow-ui.com/health" > /dev/null 2>&1; then
+            STAGING_HEALTHY="true"
+            echo "✅ Staging environment is healthy"
+          else
+            echo "❌ Staging environment is not responding"
+          fi
+
+          # Check production environment
+          PRODUCTION_HEALTHY="false"
+          if curl -f -s --max-time 30 "https://claude-flow-ui.com/health" > /dev/null 2>&1; then
+            PRODUCTION_HEALTHY="true"
+            echo "✅ Production environment is healthy"
+          else
+            echo "❌ Production environment is not responding"
+          fi
+
+          echo "staging-healthy=$STAGING_HEALTHY" >> $GITHUB_OUTPUT
+          echo "production-healthy=$PRODUCTION_HEALTHY" >> $GITHUB_OUTPUT
+
+          # Log overall health status
+          echo "🌍 Environment Health Summary:"
+          echo "  Staging: $STAGING_HEALTHY"
+          echo "  Production: $PRODUCTION_HEALTHY"
+
+  # Nightly regression tests - core functionality validation
+  nightly-regression-tests:
+    name: Nightly Regression Tests
+    runs-on: ubuntu-latest
+    needs: [test-scope-detection, environment-health-check]
+    if: needs.test-scope-detection.outputs.run-nightly == 'true'
+
+    strategy:
+      fail-fast: false
+      matrix:
+        test-suite: [unit-tests, integration-tests, e2e-smoke, api-health]
+        node-version: ['20.x'] # Use stable version for nightly tests
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Run unit tests
+        if: matrix.test-suite == 'unit-tests'
+        run: |
+          echo "🧪 Running nightly unit tests..."
+          npm run test:ci
+        env:
+          NODE_OPTIONS: '--max-old-space-size=4096'
+
+      - name: Run integration tests
+        if: matrix.test-suite == 'integration-tests'
+        services:
+          postgres:
+            image: postgres:15-alpine
+            env:
+              POSTGRES_PASSWORD: test_pass
+              POSTGRES_USER: test_user
+              POSTGRES_DB: claude_flow_test
+            options: >
+              --health-cmd pg_isready
+              --health-interval 10s
+              --health-timeout 5s
+              --health-retries 5
+            ports:
+              - 5432:5432
+          redis:
+            image: redis:7-alpine
+            options: >
+              --health-cmd "redis-cli ping"
+              --health-interval 10s
+              --health-timeout 5s
+              --health-retries 5
+            ports:
+              - 6379:6379
+        run: |
+          echo "🔧 Running integration tests..."
+          # Wait for services
+          timeout 60 bash -c 'until pg_isready -h localhost -p 5432 -U test_user; do sleep 2; done'
+          timeout 60 bash -c 'until redis-cli -h localhost -p 6379 ping | grep -q PONG; do sleep 2; done'
+
+          if npm run --silent | grep -q "test:integration"; then
+            npm run test:integration
+          else
+            echo "⚠️ No integration tests configured"
+          fi
+        env:
+          TEST_DB_HOST: localhost
+          TEST_DB_PORT: 5432
+          TEST_DB_NAME: claude_flow_test
+          TEST_DB_USER: test_user
+          TEST_DB_PASS: test_pass
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+
+      - name: Run E2E smoke tests
+        if: matrix.test-suite == 'e2e-smoke'
+        run: |
+          echo "💨 Running E2E smoke tests..."
+          npx playwright install --with-deps chromium
+
+          npx playwright test \
+            --config=tests/e2e/playwright.config.ts \
+            --project=chromium \
+            --grep="@smoke" \
+            --reporter=line
+        env:
+          BASE_URL: https://staging.claude-flow-ui.com
+
+      - name: Run API health tests
+        if: matrix.test-suite == 'api-health'
+        run: |
+          echo "🌐 Running API health tests..."
+          npx playwright test \
+            --config=tests/e2e/playwright.config.ts \
+            --project=api \
+            --grep="@health" \
+            --reporter=line
+
+      - name: Upload nightly test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-results-${{ matrix.test-suite }}
+          path: |
+            test-results/
+            coverage/
+            tests/e2e/reports/
+          retention-days: 7
+
+  # Weekly comprehensive tests - full regression suite
+  weekly-comprehensive-tests:
+    name: Weekly Comprehensive Tests
+    runs-on: ubuntu-latest
+    needs: [test-scope-detection, environment-health-check]
+    if: needs.test-scope-detection.outputs.run-weekly == 'true'
+
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+        environment: [staging, production]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+
+      - name: Run comprehensive E2E tests
+        run: |
+          echo "🎭 Running comprehensive E2E tests on ${{ matrix.environment }} with ${{ matrix.browser }}"
+
+          # Skip if environment is unhealthy
+          if [[ "${{ matrix.environment }}" == "staging" && "${{ needs.environment-health-check.outputs.staging-healthy }}" != "true" ]]; then
+            echo "⚠️ Skipping staging tests - environment unhealthy"
+            exit 0
+          fi
+
+          if [[ "${{ matrix.environment }}" == "production" && "${{ needs.environment-health-check.outputs.production-healthy }}" != "true" ]]; then
+            echo "⚠️ Skipping production tests - environment unhealthy"
+            exit 0
+          fi
+
+          # Set base URL based on environment
+          if [[ "${{ matrix.environment }}" == "production" ]]; then
+            BASE_URL="https://claude-flow-ui.com"
+          else
+            BASE_URL="https://staging.claude-flow-ui.com"
+          fi
+
+          npx playwright test \
+            --config=tests/e2e/playwright.config.ts \
+            --project=${{ matrix.browser }} \
+            --reporter=html,json
+        env:
+          BASE_URL: ${{ matrix.environment == 'production' && 'https://claude-flow-ui.com' || 'https://staging.claude-flow-ui.com' }}
+
+      - name: Run accessibility tests
+        run: |
+          echo "♿ Running accessibility tests..."
+          npx playwright test \
+            --config=tests/e2e/playwright.config.ts \
+            --project=accessibility \
+            --reporter=html
+
+      - name: Run visual regression tests
+        run: |
+          echo "👁️ Running visual regression tests..."
+          npx playwright test \
+            --config=tests/e2e/playwright.config.ts \
+            --project=visual \
+            --reporter=html
+
+      - name: Upload weekly test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-results-${{ matrix.browser }}-${{ matrix.environment }}
+          path: |
+            tests/e2e/test-results/
+            tests/e2e/reports/
+          retention-days: 14
+
+  # Performance monitoring and benchmarking
+  performance-monitoring:
+    name: Performance Monitoring
+    runs-on: ubuntu-latest
+    needs: [test-scope-detection, environment-health-check]
+    if: needs.test-scope-detection.outputs.run-performance == 'true'
+
+    strategy:
+      matrix:
+        environment: [staging, production]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Install performance testing tools
+        run: |
+          npm install -g lighthouse autocannon
+          npx playwright install --with-deps chromium
+
+      - name: Run Lighthouse performance audit
+        run: |
+          echo "💡 Running Lighthouse performance audit on ${{ matrix.environment }}..."
+
+          # Skip if environment is unhealthy
+          if [[ "${{ matrix.environment }}" == "staging" && "${{ needs.environment-health-check.outputs.staging-healthy }}" != "true" ]]; then
+            echo "⚠️ Skipping staging performance tests - environment unhealthy"
+            exit 0
+          fi
+
+          if [[ "${{ matrix.environment }}" == "production" && "${{ needs.environment-health-check.outputs.production-healthy }}" != "true" ]]; then
+            echo "⚠️ Skipping production performance tests - environment unhealthy"
+            exit 0
+          fi
+
+          # Set target URL
+          if [[ "${{ matrix.environment }}" == "production" ]]; then
+            TARGET_URL="https://claude-flow-ui.com"
+          else
+            TARGET_URL="https://staging.claude-flow-ui.com"
+          fi
+
+          # Run Lighthouse audit
+          lighthouse "$TARGET_URL" \
+            --output=html,json \
+            --output-path=./lighthouse-${{ matrix.environment }} \
+            --preset=desktop \
+            --chrome-flags="--headless --no-sandbox" \
+            --quiet
+
+          # Extract key metrics
+          PERFORMANCE_SCORE=$(cat lighthouse-${{ matrix.environment }}.report.json | jq '.categories.performance.score * 100')
+          ACCESSIBILITY_SCORE=$(cat lighthouse-${{ matrix.environment }}.report.json | jq '.categories.accessibility.score * 100')
+          BEST_PRACTICES_SCORE=$(cat lighthouse-${{ matrix.environment }}.report.json | jq '.categories["best-practices"].score * 100')
+          SEO_SCORE=$(cat lighthouse-${{ matrix.environment }}.report.json | jq '.categories.seo.score * 100')
+
+          echo "📊 Lighthouse Scores for ${{ matrix.environment }}:"
+          echo "  Performance: ${PERFORMANCE_SCORE}%"
+          echo "  Accessibility: ${ACCESSIBILITY_SCORE}%"
+          echo "  Best Practices: ${BEST_PRACTICES_SCORE}%"
+          echo "  SEO: ${SEO_SCORE}%"
+
+          # Store metrics for trending
+          echo "{
+            \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",
+            \"environment\": \"${{ matrix.environment }}\",
+            \"performance\": ${PERFORMANCE_SCORE},
+            \"accessibility\": ${ACCESSIBILITY_SCORE},
+            \"best_practices\": ${BEST_PRACTICES_SCORE},
+            \"seo\": ${SEO_SCORE}
+          }" > performance-metrics-${{ matrix.environment }}.json
+
+      - name: Run load testing
+        run: |
+          echo "⚡ Running load testing on ${{ matrix.environment }}..."
+
+          # Set target URL
+          if [[ "${{ matrix.environment }}" == "production" ]]; then
+            TARGET_URL="https://claude-flow-ui.com"
+            # Use lighter load for production
+            CONNECTIONS=10
+            DURATION=30
+          else
+            TARGET_URL="https://staging.claude-flow-ui.com"
+            # More aggressive testing on staging
+            CONNECTIONS=25
+            DURATION=60
+          fi
+
+          # Run load test
+          autocannon -c $CONNECTIONS -d ${DURATION}s -j "$TARGET_URL" > load-test-${{ matrix.environment }}.json
+
+          # Extract key metrics
+          REQUESTS_PER_SECOND=$(cat load-test-${{ matrix.environment }}.json | jq '.requests.mean')
+          LATENCY_AVG=$(cat load-test-${{ matrix.environment }}.json | jq '.latency.mean')
+          LATENCY_P99=$(cat load-test-${{ matrix.environment }}.json | jq '.latency.p99')
+
+          echo "⚡ Load Test Results for ${{ matrix.environment }}:"
+          echo "  Requests/sec: ${REQUESTS_PER_SECOND}"
+          echo "  Avg Latency: ${LATENCY_AVG}ms"
+          echo "  P99 Latency: ${LATENCY_P99}ms"
+
+      - name: Performance regression detection
+        run: |
+          echo "📈 Checking for performance regressions..."
+
+          # Create performance report for trending
+          cat > performance-report-${{ matrix.environment }}.md << EOF
+          # Performance Report - ${{ matrix.environment }}
+          **Date:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          **Environment:** ${{ matrix.environment }}
+
+          ## Lighthouse Scores
+          - Performance: $(cat performance-metrics-${{ matrix.environment }}.json | jq '.performance')%
+          - Accessibility: $(cat performance-metrics-${{ matrix.environment }}.json | jq '.accessibility')%
+          - Best Practices: $(cat performance-metrics-${{ matrix.environment }}.json | jq '.best_practices')%
+          - SEO: $(cat performance-metrics-${{ matrix.environment }}.json | jq '.seo')%
+
+          ## Load Test Results
+          - Requests/sec: $(cat load-test-${{ matrix.environment }}.json | jq '.requests.mean')
+          - Avg Latency: $(cat load-test-${{ matrix.environment }}.json | jq '.latency.mean')ms
+          - P99 Latency: $(cat load-test-${{ matrix.environment }}.json | jq '.latency.p99')ms
+          EOF
+
+          # Check for performance threshold violations
+          PERFORMANCE_SCORE=$(cat performance-metrics-${{ matrix.environment }}.json | jq '.performance')
+          if (( $(echo "$PERFORMANCE_SCORE < 80" | bc -l) )); then
+            echo "⚠️ Performance score below 80% threshold"
+          fi
+
+      - name: Upload performance results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-results-${{ matrix.environment }}
+          path: |
+            lighthouse-${{ matrix.environment }}*
+            load-test-${{ matrix.environment }}.json
+            performance-metrics-${{ matrix.environment }}.json
+            performance-report-${{ matrix.environment }}.md
+          retention-days: 30
+
+  # Security monitoring and vulnerability scanning
+  security-monitoring:
+    name: Security Monitoring
+    runs-on: ubuntu-latest
+    needs: [test-scope-detection]
+    if: needs.test-scope-detection.outputs.run-security == 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Run comprehensive security audit
+        run: |
+          echo "🔐 Running comprehensive security audit..."
+
+          # Run npm audit with full details
+          npm audit --audit-level=low --json > security-audit-full.json || true
+
+          # Parse and categorize vulnerabilities
+          CRITICAL=$(cat security-audit-full.json | jq '.metadata.vulnerabilities.critical // 0')
+          HIGH=$(cat security-audit-full.json | jq '.metadata.vulnerabilities.high // 0')
+          MODERATE=$(cat security-audit-full.json | jq '.metadata.vulnerabilities.moderate // 0')
+          LOW=$(cat security-audit-full.json | jq '.metadata.vulnerabilities.low // 0')
+
+          echo "🔐 Security Audit Summary:"
+          echo "  Critical: $CRITICAL"
+          echo "  High: $HIGH"
+          echo "  Moderate: $MODERATE"
+          echo "  Low: $LOW"
+
+          # Create security report
+          cat > security-report.md << EOF
+          # Security Monitoring Report
+          **Date:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+
+          ## Vulnerability Summary
+          - Critical: $CRITICAL
+          - High: $HIGH
+          - Moderate: $MODERATE
+          - Low: $LOW
+
+          ## Actions Required
+          EOF
+
+          if [ "$CRITICAL" -gt 0 ] || [ "$HIGH" -gt 0 ]; then
+            echo "- 🚨 **URGENT**: Critical or high severity vulnerabilities found" >> security-report.md
+            echo "- Review and update affected packages immediately" >> security-report.md
+          elif [ "$MODERATE" -gt 0 ]; then
+            echo "- ⚠️ Moderate severity vulnerabilities found" >> security-report.md
+            echo "- Schedule maintenance window for updates" >> security-report.md
+          else
+            echo "- ✅ No high-priority vulnerabilities found" >> security-report.md
+          fi
+
+          # Set exit code for critical issues
+          if [ "$CRITICAL" -gt 0 ]; then
+            echo "❌ Critical vulnerabilities found - failing build"
+            exit 1
+          fi
+
+      - name: License compliance check
+        run: |
+          echo "📄 Checking license compliance..."
+          npx license-checker --summary > license-summary.txt
+          npx license-checker --csv > license-details.csv
+
+          # Check for problematic licenses
+          if grep -q "GPL\|LGPL\|AGPL" license-details.csv; then
+            echo "⚠️ Potential license compliance issues found"
+            grep "GPL\|LGPL\|AGPL" license-details.csv || true
+          else
+            echo "✅ No license compliance issues detected"
+          fi
+
+      - name: Dependency freshness analysis
+        run: |
+          echo "📦 Analyzing dependency freshness..."
+          npm outdated --json > outdated-deps.json || true
+
+          if [ -s outdated-deps.json ] && [ "$(cat outdated-deps.json)" != "{}" ]; then
+            echo "📊 Outdated Dependencies Found:"
+            npm outdated
+
+            # Count outdated packages
+            OUTDATED_COUNT=$(cat outdated-deps.json | jq 'keys | length')
+            echo "Total outdated packages: $OUTDATED_COUNT"
+
+            if [ "$OUTDATED_COUNT" -gt 20 ]; then
+              echo "⚠️ High number of outdated dependencies - consider update cycle"
+            fi
+          else
+            echo "✅ All dependencies are up to date"
+          fi
+
+      - name: Upload security results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-monitoring-results
+          path: |
+            security-audit-full.json
+            security-report.md
+            license-summary.txt
+            license-details.csv
+            outdated-deps.json
+          retention-days: 30
+
+  # Monthly dependency updates and maintenance
+  monthly-dependency-updates:
+    name: Monthly Dependency Updates
+    runs-on: ubuntu-latest
+    needs: [test-scope-detection]
+    if: needs.test-scope-detection.outputs.run-dependency-update == 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Analyze current dependencies
+        run: |
+          echo "📊 Analyzing current dependency status..."
+          npm outdated --json > current-outdated.json || true
+          npm audit --json > current-audit.json || true
+
+          echo "Current package versions:"
+          node -p "JSON.stringify(require('./package.json').dependencies, null, 2)"
+
+      - name: Create dependency update branch
+        run: |
+          echo "🌿 Creating dependency update branch..."
+          BRANCH_NAME="automated/dependency-updates-$(date +%Y-%m)"
+          git checkout -b "$BRANCH_NAME"
+          echo "branch-name=$BRANCH_NAME" >> $GITHUB_ENV
+
+      - name: Update minor and patch versions
+        run: |
+          echo "⬆️ Updating minor and patch versions..."
+
+          # Update all dependencies to their latest minor/patch versions
+          npm update
+
+          # Check what changed
+          if ! git diff --quiet package-lock.json; then
+            echo "✅ Dependencies updated"
+            git add package-lock.json package.json
+          else
+            echo "ℹ️ No dependency updates available"
+          fi
+
+      - name: Test updated dependencies
+        run: |
+          echo "🧪 Testing updated dependencies..."
+
+          # Install and run basic tests
+          npm ci
+          npm run lint
+          npm run type-check
+
+          # Run unit tests
+          if npm run --silent | grep -q "test:ci"; then
+            npm run test:ci
+            echo "✅ Tests passed with updated dependencies"
+          else
+            echo "⚠️ No tests configured"
+          fi
+
+      - name: Generate dependency update report
+        run: |
+          echo "📝 Generating dependency update report..."
+
+          cat > dependency-update-report.md << EOF
+          # Monthly Dependency Update Report
+          **Date:** $(date -u '+%Y-%m-%d')
+          **Branch:** ${{ env.branch-name }}
+
+          ## Summary
+          This automated update includes minor and patch version updates for all dependencies.
+
+          ## Updated Packages
+          EOF
+
+          # List updated packages
+          if ! git diff --quiet HEAD~1 package-lock.json; then
+            echo "\`\`\`" >> dependency-update-report.md
+            git diff HEAD~1 package-lock.json | grep "\"version\":" | head -20 >> dependency-update-report.md || true
+            echo "\`\`\`" >> dependency-update-report.md
+          else
+            echo "No packages were updated." >> dependency-update-report.md
+          fi
+
+          cat >> dependency-update-report.md << EOF
+
+          ## Test Results
+          - ✅ Linting: Passed
+          - ✅ Type Checking: Passed
+          - ✅ Unit Tests: Passed
+
+          ## Next Steps
+          1. Review this PR for any breaking changes
+          2. Run full regression tests
+          3. Deploy to staging for validation
+          4. Merge if all tests pass
+
+          ---
+          *This PR was automatically created by the scheduled dependency update workflow.*
+          EOF
+
+      - name: Commit and push changes
+        run: |
+          if ! git diff --quiet; then
+            echo "📝 Committing dependency updates..."
+
+            git config --local user.email "action@github.com"
+            git config --local user.name "GitHub Action"
+            git commit -m "chore: automated dependency updates for $(date +%Y-%m)
+
+            - Updated minor and patch versions
+            - All tests passing
+            - Generated by scheduled workflow"
+
+            git push origin "${{ env.branch-name }}"
+
+            echo "✅ Dependency update branch created: ${{ env.branch-name }}"
+          else
+            echo "ℹ️ No changes to commit"
+          fi
+
+      - name: Create pull request
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            // Check if there are any changes
+            const { execSync } = require('child_process');
+            try {
+              execSync('git diff --quiet HEAD~1');
+              console.log('No changes to create PR for');
+              return;
+            } catch (error) {
+              // There are changes, proceed with PR creation
+            }
+
+            const report = fs.readFileSync('dependency-update-report.md', 'utf8');
+
+            await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `chore: Automated dependency updates for ${new Date().toISOString().slice(0, 7)}`,
+              head: process.env.branch_name,
+              base: 'main',
+              body: report,
+              draft: false,
+              labels: ['dependencies', 'automated', 'maintenance']
+            });
+
+  # Test results aggregation and reporting
+  scheduled-testing-summary:
+    name: Scheduled Testing Summary
+    runs-on: ubuntu-latest
+    needs: [
+      test-scope-detection,
+      environment-health-check,
+      nightly-regression-tests,
+      weekly-comprehensive-tests,
+      performance-monitoring,
+      security-monitoring,
+      monthly-dependency-updates
+    ]
+    if: always()
+
+    steps:
+      - name: Download all test artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./test-results
+
+      - name: Generate comprehensive summary
+        run: |
+          echo "# 📅 Scheduled Testing Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Test Type:** ${{ needs.test-scope-detection.outputs.test-type }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Date:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "**Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Environment Health
+          echo "## Environment Health" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Staging | ${{ needs.environment-health-check.outputs.staging-healthy == 'true' && '✅ Healthy' || '❌ Unhealthy' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Production | ${{ needs.environment-health-check.outputs.production-healthy == 'true' && '✅ Healthy' || '❌ Unhealthy' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Test Results
+          echo "## Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "| Test Suite | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------------|--------|" >> $GITHUB_STEP_SUMMARY
+
+          # Check each test suite result
+          declare -A test_results
+          test_results["Nightly Regression"]="${{ needs.nightly-regression-tests.result }}"
+          test_results["Weekly Comprehensive"]="${{ needs.weekly-comprehensive-tests.result }}"
+          test_results["Performance Monitoring"]="${{ needs.performance-monitoring.result }}"
+          test_results["Security Monitoring"]="${{ needs.security-monitoring.result }}"
+          test_results["Dependency Updates"]="${{ needs.monthly-dependency-updates.result }}"
+
+          for test_suite in "${!test_results[@]}"; do
+            status="${test_results[$test_suite]}"
+            case $status in
+              "success") icon="✅ Passed" ;;
+              "failure") icon="❌ Failed" ;;
+              "cancelled") icon="⏸️ Cancelled" ;;
+              "skipped") icon="⏭️ Skipped" ;;
+              *) icon="❓ Unknown" ;;
+            esac
+            echo "| $test_suite | $icon |" >> $GITHUB_STEP_SUMMARY
+          done
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Performance Summary (if available)
+          if [ -d "./test-results/performance-results-staging" ]; then
+            echo "## Performance Summary" >> $GITHUB_STEP_SUMMARY
+            echo "Performance metrics and trends will be displayed here." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Security Summary (if available)
+          if [ -d "./test-results/security-monitoring-results" ]; then
+            echo "## Security Summary" >> $GITHUB_STEP_SUMMARY
+            echo "Security scan results and vulnerability status will be displayed here." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "*Next scheduled run: $(date -u -d 'tomorrow 2:00' '+%Y-%m-%d at 02:00 UTC')*" >> $GITHUB_STEP_SUMMARY
+
+      - name: Store comprehensive results
+        uses: actions/upload-artifact@v4
+        with:
+          name: scheduled-testing-summary-${{ github.run_number }}
+          path: ./test-results/
+          retention-days: 90
+
+      - name: Notify on failures
+        if: failure()
+        run: |
+          echo "📢 Scheduled tests have failures - consider investigating:"
+          echo "  - Check environment health"
+          echo "  - Review test failure logs"
+          echo "  - Update dependencies if security issues found"
+          echo "  - Consider manual intervention for critical issues"

@@ -1,0 +1,235 @@
+{
+  "timestamp": "2025-09-24T22:45:02.899Z",
+  "summary": {
+    "totalFiles": 3,
+    "averageMetrics": {
+      "lines": 85,
+      "branches": 81.7,
+      "functions": 90.6,
+      "statements": 84.7
+    }
+  },
+  "trends": [
+    {
+      "timestamp": "2024-09-20",
+      "lines": 82,
+      "branches": 78,
+      "functions": 88,
+      "statements": 81
+    },
+    {
+      "timestamp": "2024-09-21",
+      "lines": 83,
+      "branches": 79,
+      "functions": 89,
+      "statements": 82
+    },
+    {
+      "timestamp": "2024-09-22",
+      "lines": 84,
+      "branches": 80,
+      "functions": 90,
+      "statements": 83
+    },
+    {
+      "timestamp": "2024-09-23",
+      "lines": 85,
+      "branches": 82,
+      "functions": 91,
+      "statements": 85
+    }
+  ],
+  "files": {
+    "src/components/Terminal.tsx": {
+      "metrics": {
+        "lines": {
+          "total": 150,
+          "covered": 135,
+          "pct": 90,
+          "uncovered": [
+            45,
+            67,
+            89
+          ]
+        },
+        "branches": {
+          "total": 40,
+          "covered": 36,
+          "pct": 90,
+          "uncovered": []
+        },
+        "functions": {
+          "total": 12,
+          "covered": 11,
+          "pct": 91.7,
+          "uncovered": []
+        },
+        "statements": {
+          "total": 145,
+          "covered": 130,
+          "pct": 89.7,
+          "uncovered": []
+        }
+      }
+    },
+    "src/hooks/useTerminal.ts": {
+      "metrics": {
+        "lines": {
+          "total": 80,
+          "covered": 76,
+          "pct": 95,
+          "uncovered": [
+            23,
+            45
+          ]
+        },
+        "branches": {
+          "total": 20,
+          "covered": 19,
+          "pct": 95,
+          "uncovered": []
+        },
+        "functions": {
+          "total": 8,
+          "covered": 8,
+          "pct": 100,
+          "uncovered": []
+        },
+        "statements": {
+          "total": 75,
+          "covered": 71,
+          "pct": 94.7,
+          "uncovered": []
+        }
+      }
+    },
+    "src/lib/websocket.ts": {
+      "metrics": {
+        "lines": {
+          "total": 120,
+          "covered": 84,
+          "pct": 70,
+          "uncovered": [
+            12,
+            34,
+            56,
+            78,
+            90
+          ]
+        },
+        "branches": {
+          "total": 30,
+          "covered": 18,
+          "pct": 60,
+          "uncovered": []
+        },
+        "functions": {
+          "total": 15,
+          "covered": 12,
+          "pct": 80,
+          "uncovered": []
+        },
+        "statements": {
+          "total": 115,
+          "covered": 80,
+          "pct": 69.6,
+          "uncovered": []
+        }
+      }
+    }
+  },
+  "hotspots": {
+    "mostCritical": [
+      {
+        "filePath": "src/lib/websocket.ts",
+        "metrics": {
+          "lines": {
+            "total": 120,
+            "covered": 84,
+            "pct": 70,
+            "uncovered": [
+              12,
+              34,
+              56,
+              78,
+              90
+            ]
+          },
+          "branches": {
+            "total": 30,
+            "covered": 18,
+            "pct": 60,
+            "uncovered": []
+          },
+          "functions": {
+            "total": 15,
+            "covered": 12,
+            "pct": 80,
+            "uncovered": []
+          },
+          "statements": {
+            "total": 115,
+            "covered": 80,
+            "pct": 69.6,
+            "uncovered": []
+          }
+        },
+        "quality": {
+          "level": "poor",
+          "score": 65
+        },
+        "risks": [
+          {
+            "type": "high-impact-low-coverage",
+            "severity": "high"
+          }
+        ]
+      }
+    ],
+    "lowestCoverage": [
+      {
+        "filePath": "src/lib/websocket.ts",
+        "metrics": {
+          "lines": {
+            "total": 120,
+            "covered": 84,
+            "pct": 70,
+            "uncovered": [
+              12,
+              34,
+              56,
+              78,
+              90
+            ]
+          },
+          "branches": {
+            "total": 30,
+            "covered": 18,
+            "pct": 60,
+            "uncovered": []
+          },
+          "functions": {
+            "total": 15,
+            "covered": 12,
+            "pct": 80,
+            "uncovered": []
+          },
+          "statements": {
+            "total": 115,
+            "covered": 80,
+            "pct": 69.6,
+            "uncovered": []
+          }
+        }
+      }
+    ]
+  },
+  "recommendations": [
+    {
+      "priority": "high",
+      "type": "testing",
+      "action": "Add tests for websocket connection handling",
+      "target": "Increase line coverage to 80%"
+    }
+  ]
+}

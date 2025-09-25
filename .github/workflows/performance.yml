@@ -1,0 +1,256 @@
+name: Performance Benchmarks
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run performance tests daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Type of performance test to run'
+        required: true
+        default: 'ci'
+        type: choice
+        options:
+        - quick
+        - ci
+        - full
+        - stress
+
+jobs:
+  performance-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Install additional performance tools
+      run: |
+        npm install -g lighthouse @lhci/cli
+        sudo apt-get update
+        sudo apt-get install -y tmux
+
+    - name: Build application
+      run: npm run build
+
+    - name: Setup performance test environment
+      run: |
+        mkdir -p tests/performance/{results,reports,memory,lighthouse/reports}
+        echo "Performance test environment ready"
+
+    - name: Run performance benchmarks
+      env:
+        NODE_ENV: ci
+        CI: true
+      run: |
+        TEST_TYPE="${{ github.event.inputs.test_type || 'ci' }}"
+        echo "Running performance tests in $TEST_TYPE mode"
+
+        case $TEST_TYPE in
+          "quick")
+            npm run test:performance:quick
+            ;;
+          "full")
+            npm run test:performance
+            ;;
+          "stress")
+            npm run test:performance:stress
+            ;;
+          *)
+            npm run test:performance:ci
+            ;;
+        esac
+
+    - name: Run Lighthouse CI (if applicable)
+      if: matrix.node-version == '20.x'
+      env:
+        LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}
+      run: |
+        # Start the server in background
+        npm run server &
+        SERVER_PID=$!
+
+        # Wait for server to be ready
+        timeout 30 bash -c 'until curl -sf http://localhost:8080/api/health; do sleep 1; done'
+
+        # Run Lighthouse CI
+        npm run lighthouse:ci || true
+
+        # Stop the server
+        kill $SERVER_PID || true
+
+    - name: Upload performance reports
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: performance-reports-node-${{ matrix.node-version }}
+        path: |
+          tests/performance/reports/
+          tests/performance/lighthouse/reports/
+          tests/performance/memory/
+        retention-days: 30
+
+    - name: Check performance regressions
+      run: |
+        # Read the stored performance metrics
+        if [ -f "tests/performance/memory/performance_benchmarks_complete.json" ]; then
+          SCORE=$(cat tests/performance/memory/performance_benchmarks_complete.json | jq '.overall_score // 0')
+          REGRESSIONS=$(cat tests/performance/memory/performance_benchmarks_complete.json | jq '.regressions_count // 0')
+
+          echo "Performance Score: $SCORE"
+          echo "Regressions Found: $REGRESSIONS"
+
+          # Fail if score is too low or regressions found
+          if (( $(echo "$SCORE < 60" | bc -l) )); then
+            echo "❌ Performance score too low: $SCORE < 60"
+            exit 1
+          fi
+
+          if [ "$REGRESSIONS" -gt "3" ]; then
+            echo "❌ Too many regressions found: $REGRESSIONS > 3"
+            exit 1
+          fi
+
+          echo "✅ Performance tests passed"
+        else
+          echo "⚠️ No performance metrics found"
+        fi
+
+    - name: Comment PR with performance results
+      if: github.event_name == 'pull_request' && matrix.node-version == '20.x'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const path = 'tests/performance/memory/performance_benchmarks_complete.json';
+
+          if (fs.existsSync(path)) {
+            const data = JSON.parse(fs.readFileSync(path, 'utf8'));
+
+            const comment = `## 🔍 Performance Test Results
+
+          **Overall Score:** ${data.overall_score?.toFixed(1) || 'N/A'}/100
+          **Tests Run:** ${data.tests_run || 'N/A'}
+          **Success Rate:** ${data.success_rate?.toFixed(1) || 'N/A'}%
+          **Duration:** ${data.duration_seconds?.toFixed(2) || 'N/A'}s
+          **Regressions:** ${data.regressions_count || 0}
+
+          ${data.regressions_count > 0 ?
+            `### ⚠️ Performance Regressions Detected\n${data.regressions_count} regression(s) found. Check the detailed report for more information.` :
+            '### ✅ No Performance Regressions'
+          }
+
+          ${data.recommendations?.length > 0 ?
+            `### 💡 Optimization Recommendations\n${data.recommendations.slice(0, 5).map(r => `- ${r}`).join('\n')}` :
+            ''
+          }
+
+          <details>
+          <summary>View Detailed Metrics</summary>
+
+          \`\`\`json
+          ${JSON.stringify(data.key_metrics || {}, null, 2)}
+          \`\`\`
+          </details>
+          `;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+          }
+
+  benchmark-comparison:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    needs: performance-tests
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Checkout base branch
+      run: |
+        git fetch origin ${{ github.base_ref }}:${{ github.base_ref }}
+        git checkout ${{ github.base_ref }}
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x'
+        cache: 'npm'
+
+    - name: Install dependencies (base)
+      run: npm ci
+
+    - name: Build application (base)
+      run: npm run build
+
+    - name: Run baseline performance tests
+      run: npm run test:performance:quick
+
+    - name: Store baseline results
+      run: |
+        mkdir -p baseline-results
+        cp -r tests/performance/memory/ baseline-results/
+
+    - name: Checkout PR branch
+      run: git checkout ${{ github.head_ref }}
+
+    - name: Download PR performance results
+      uses: actions/download-artifact@v4
+      with:
+        name: performance-reports-node-20.x
+        path: pr-results/
+
+    - name: Compare performance results
+      run: |
+        echo "## Performance Comparison" >> comparison.md
+        echo "" >> comparison.md
+
+        if [ -f "baseline-results/memory/performance_benchmarks_complete.json" ] && [ -f "pr-results/memory/performance_benchmarks_complete.json" ]; then
+          BASELINE_SCORE=$(cat baseline-results/memory/performance_benchmarks_complete.json | jq '.overall_score // 0')
+          PR_SCORE=$(cat pr-results/memory/performance_benchmarks_complete.json | jq '.overall_score // 0')
+
+          DIFF=$(echo "$PR_SCORE - $BASELINE_SCORE" | bc -l)
+
+          echo "| Metric | Baseline | PR | Change |" >> comparison.md
+          echo "|--------|----------|----|---------| " >> comparison.md
+          echo "| Overall Score | ${BASELINE_SCORE} | ${PR_SCORE} | ${DIFF} |" >> comparison.md
+
+          if (( $(echo "$DIFF < -5" | bc -l) )); then
+            echo "" >> comparison.md
+            echo "⚠️ **Performance regression detected!** Score decreased by ${DIFF} points." >> comparison.md
+          elif (( $(echo "$DIFF > 5" | bc -l) )); then
+            echo "" >> comparison.md
+            echo "🎉 **Performance improvement detected!** Score increased by ${DIFF} points." >> comparison.md
+          else
+            echo "" >> comparison.md
+            echo "✅ Performance is stable with minimal change." >> comparison.md
+          fi
+        else
+          echo "Unable to compare - missing baseline or PR results" >> comparison.md
+        fi
+
+        cat comparison.md

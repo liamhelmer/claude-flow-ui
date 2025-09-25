@@ -1,0 +1,16 @@
+firstName,lastName,email,phone,address,age,birthDate,company
+John,doe,JOHN.DOE@EXAMPLE.COM,(555) 123-4567,123 main st,32,1991-05-15,Tech Corp
+jane,SMITH,jane.smith@gmail.com,555.987.6543,456 oak ave,28,1995-08-22,Design LLC
+Bob,Johnson,bob@invalid-email,+1-555-111-2222,789 Pine Rd,45,1978-12-03,Sales Inc
+Alice,Williams,alice.williams@company.org,5551234567,321 Elm Blvd,35,,Marketing Pro
+Charlie,Brown,charlie.brown@email.com,(555) 555-5555,654 Cedar Street,29,1994-03-10,
+David,Davis,,555-987-1234,987 Maple Ave,40,1983-07-18,Finance Corp
+Emma,Wilson,emma.wilson@test.com,555 321 9876,147 Birch Ln,26,1997-11-30,HR Solutions
+Frank,Miller,frank.miller@example.com,+1 (555) 777-8888,258 Spruce St,38,1985-09-12,IT Services
+Grace,Taylor,GRACE.TAYLOR@DOMAIN.COM,555-666-7777,369 Willow Way,31,1992-04-25,Consulting
+Henry,Anderson,henry.anderson@email.net,5559998888,741 Aspen Dr,150,1920-01-01,Legal Firm
+John,doe,john.doe@example.com,555-123-4567,123 Main Street,32,1991-05-15,Tech Corp
+Lisa,White,lisa.white@company.com,,852 Poplar Pl,33,1990-06-08,Media Group
+Mike,Brown,mike.brown@invalid,555-444-3333,963 Hickory Hill,42,invalid-date,Construction
+Nancy,Green,nancy.green@business.org,555.777.9999,159 Chestnut Cir,27,1996-10-14,Retail Chain
+Oliver,Black,oliver.black@email.com,1234567890,753 Magnolia Ct,36,1987-02-28,Manufacturing

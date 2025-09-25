@@ -1,0 +1,11 @@
+customer_id,first_name,last_name,email_address,phone_number,birth_date,registration_date,account_balance,is_active
+1001,john,doe,JOHN.DOE@EXAMPLE.COM,(555) 123-4567,1985-03-15,2020-01-10,1250.75,true
+1002,jane,smith,jane.smith@gmail.com,555.987.6543,1990-07-22,2020-02-15,875.50,true
+1003,bob,johnson,bob@company.org,+1-555-111-2222,1978-12-03,2019-11-20,2100.00,false
+1004,alice,williams,alice.williams@email.com,5551234567,1988-05-18,2021-03-08,450.25,true
+1005,charlie,brown,,555-555-5555,1995-09-10,2021-06-12,0.00,true
+1006,david,davis,david.davis@domain.com,555-987-1234,,2020-08-25,1875.80,true
+1007,emma,wilson,emma.wilson@test.com,555 321 9876,1992-11-30,2019-12-01,3200.15,true
+1008,frank,miller,frank.miller@example.com,+1 (555) 777-8888,1987-04-12,2021-01-18,725.60,false
+1009,grace,taylor,GRACE.TAYLOR@DOMAIN.COM,555-666-7777,1993-08-25,2020-07-03,1100.90,true
+1010,henry,anderson,henry.anderson@email.net,5559998888,1982-01-14,2019-10-15,950.40,true

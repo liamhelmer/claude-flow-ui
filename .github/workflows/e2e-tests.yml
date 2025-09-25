@@ -1,0 +1,375 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run nightly at 2 AM UTC
+    - cron: '0 2 * * *'
+
+env:
+  NODE_VERSION: '18'
+  PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/ms-playwright
+
+jobs:
+  e2e-tests:
+    name: E2E Tests (${{ matrix.browser }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+        include:
+          - browser: chromium
+            project: chromium
+          - browser: firefox
+            project: firefox
+          - browser: webkit
+            project: webkit
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v3
+        id: playwright-cache
+        with:
+          path: ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
+          key: ${{ runner.os }}-playwright-${{ hashFiles('**/package-lock.json') }}
+
+      - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+
+      - name: Install system dependencies
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install-deps ${{ matrix.browser }}
+
+      - name: Build application
+        run: npm run build
+
+      - name: Start application servers
+        run: |
+          npm run claude-flow-ui -- --port 11235 &
+          sleep 10
+          # Wait for servers to be ready
+          curl -f http://localhost:11235/api/status || exit 1
+
+      - name: Run E2E tests
+        run: npx playwright test --project=${{ matrix.project }}
+        env:
+          BASE_URL: http://localhost:11235
+          CI: true
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: e2e-results-${{ matrix.browser }}
+          path: |
+            tests/e2e/test-results/
+            tests/e2e/reports/
+          retention-days: 7
+
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v3
+        if: failure()
+        with:
+          name: screenshots-${{ matrix.browser }}
+          path: tests/e2e/screenshots/
+          retention-days: 7
+
+      - name: Upload videos
+        uses: actions/upload-artifact@v3
+        if: failure()
+        with:
+          name: videos-${{ matrix.browser }}
+          path: tests/e2e/videos/
+          retention-days: 7
+
+  mobile-tests:
+    name: Mobile E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Build application
+        run: npm run build
+
+      - name: Start application
+        run: |
+          npm run claude-flow-ui -- --port 11235 &
+          sleep 10
+
+      - name: Run mobile tests
+        run: npx playwright test --project=mobile-chrome --project=mobile-safari --project=tablet
+        env:
+          BASE_URL: http://localhost:11235
+          CI: true
+
+      - name: Upload mobile test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: mobile-e2e-results
+          path: |
+            tests/e2e/test-results/
+            tests/e2e/reports/
+          retention-days: 7
+
+  visual-tests:
+    name: Visual Regression Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Build application
+        run: npm run build
+
+      - name: Start application
+        run: |
+          npm run claude-flow-ui -- --port 11235 &
+          sleep 10
+
+      - name: Run visual regression tests
+        run: npx playwright test --project=visual
+        env:
+          BASE_URL: http://localhost:11235
+          CI: true
+
+      - name: Upload visual test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: visual-regression-results
+          path: |
+            tests/e2e/test-results/
+            tests/e2e/reports/
+            tests/e2e/visual-snapshots/
+          retention-days: 7
+
+  performance-tests:
+    name: Performance Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Build application
+        run: npm run build
+
+      - name: Start application
+        run: |
+          npm run claude-flow-ui -- --port 11235 &
+          sleep 10
+
+      - name: Run performance tests
+        run: npx playwright test --project=performance
+        env:
+          BASE_URL: http://localhost:11235
+          CI: true
+
+      - name: Upload performance results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: performance-test-results
+          path: |
+            tests/e2e/test-results/
+            tests/e2e/reports/
+          retention-days: 7
+
+  accessibility-tests:
+    name: Accessibility Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Build application
+        run: npm run build
+
+      - name: Start application
+        run: |
+          npm run claude-flow-ui -- --port 11235 &
+          sleep 10
+
+      - name: Run accessibility tests
+        run: npx playwright test --project=accessibility
+        env:
+          BASE_URL: http://localhost:11235
+          CI: true
+
+      - name: Upload accessibility results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: accessibility-test-results
+          path: |
+            tests/e2e/test-results/
+            tests/e2e/reports/
+          retention-days: 7
+
+  test-report:
+    name: Generate Test Report
+    runs-on: ubuntu-latest
+    needs: [e2e-tests, mobile-tests, visual-tests, performance-tests, accessibility-tests]
+    if: always()
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all test results
+        uses: actions/download-artifact@v3
+        with:
+          path: test-results
+
+      - name: Generate HTML report
+        run: |
+          mkdir -p combined-results
+          find test-results -name "*.json" -exec cp {} combined-results/ \;
+          npx playwright merge-reports --reporter=html combined-results
+
+      - name: Upload combined report
+        uses: actions/upload-artifact@v3
+        with:
+          name: combined-e2e-report
+          path: playwright-report/
+          retention-days: 30
+
+      - name: Deploy report to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        if: github.ref == 'refs/heads/main'
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./playwright-report
+          destination_dir: e2e-reports
+
+  backstage-integration:
+    name: Backstage Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: github.event_name == 'push' || github.event_name == 'schedule'
+
+    services:
+      backstage:
+        image: backstage/backstage:latest
+        ports:
+          - 3000:3000
+        env:
+          NODE_ENV: development
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Wait for Backstage to be ready
+        run: |
+          timeout 300 bash -c 'while [[ "$(curl -s -o /dev/null -w %{http_code} http://localhost:3000)" != "200" ]]; do sleep 5; done'
+
+      - name: Start Claude Flow UI
+        run: |
+          npm run claude-flow-ui -- --port 11235 &
+          sleep 10
+
+      - name: Run Backstage integration tests
+        run: npx playwright test tests/e2e/backstage-integration-workflows.spec.ts
+        env:
+          BASE_URL: http://localhost:11235
+          BACKSTAGE_URL: http://localhost:3000
+          CI: true
+
+      - name: Upload Backstage integration results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: backstage-integration-results
+          path: |
+            tests/e2e/test-results/
+            tests/e2e/reports/
+          retention-days: 7

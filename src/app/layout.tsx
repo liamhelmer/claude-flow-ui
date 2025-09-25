@@ -18,6 +18,20 @@ export const metadata: Metadata = {
   description: 'Interactive terminal and monitoring interface for Claude Flow',
   keywords: ['terminal', 'claude', 'flow', 'websocket', 'xterm', 'monitoring', 'ui'],
   authors: [{ name: 'Claude Flow Team' }],
+  manifest: '/manifest.json',
+  icons: {
+    icon: [
+      { url: '/favicon.ico', sizes: '32x32', type: 'image/x-icon' },
+      { url: '/bee-icon.svg', sizes: 'any', type: 'image/svg+xml' },
+    ],
+    apple: [
+      { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+    ],
+    other: [
+      { rel: 'icon', url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { rel: 'icon', url: '/icon-512.png', sizes: '512x512', type: 'image/png' },
+    ],
+  },
 };
 
 export const viewport = {
