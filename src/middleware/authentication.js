@@ -7,9 +7,9 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AuthenticationManager = void 0;
-const backstage_auth_1 = require("../types/backstage-auth");
-const token_validator_1 = require("../services/token-validator");
-const jwks_manager_1 = require("../services/jwks-manager");
+const backstage_auth_1 = require("../types/backstage-auth.js");
+const token_validator_1 = require("../services/token-validator.js");
+const jwks_manager_1 = require("../services/jwks-manager.js");
 /**
  * Audit logger for security events
  */
@@ -279,8 +279,8 @@ exports.createAuthenticationMiddleware = createAuthenticationMiddleware;
  * Create WebSocket authentication handler
  */
 function createWebSocketAuthHandler(config) {
-    const jwks_manager_1 = require("../services/jwks-manager");
-    const token_validator_1 = require("../services/token-validator");
+    const jwks_manager_1 = require("../services/jwks-manager.js");
+    const token_validator_1 = require("../services/token-validator.js");
     const jwksManager = new jwks_manager_1.JWKSManager(config);
     const tokenValidator = new token_validator_1.TokenValidator(config, jwksManager);
     return async (token) => {
@@ -290,7 +290,7 @@ function createWebSocketAuthHandler(config) {
             console.log('[WebSocket Auth Handler] Token validated successfully, subject:', user.subject);
             console.log('[WebSocket Auth Handler] User identity:', user.userRef);
             // Import identity resolver for authorization check
-            const { authorizeUser } = require('../services/identity-resolver');
+            const { authorizeUser } = require('../services/identity-resolver.js');
             const authResult = authorizeUser(user, config);
             console.log('[WebSocket Auth Handler] Authorization result:', authResult.allowed, authResult.reason);
             if (!authResult.allowed) {

@@ -6,8 +6,8 @@
  * and initialization of authentication middleware.
  */
 
-const { AuthenticationManager } = require('../middleware/authentication');
-const { AuthorizationManager } = require('../middleware/authorization');
+const { AuthenticationManager } = require('../middleware/authentication.js');
+const { AuthorizationManager } = require('../middleware/authorization.js');
 
 /**
  * Parse Backstage authentication CLI options

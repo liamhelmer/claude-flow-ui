@@ -51,6 +51,8 @@
     "src/middleware/**/*.ts",
     "src/middleware/**/*.js",
     "src/types/**/*.ts",
+    "src/types/**/*.js",
+    "src/types/**/*.d.ts",
     "next.config.js",
     "postcss.config.js",
     "tailwind.config.ts",

@@ -16,7 +16,7 @@ exports.getUserDisplayName = getUserDisplayName;
 exports.getGroupDisplayNames = getGroupDisplayNames;
 exports.normalizeEntityRef = normalizeEntityRef;
 exports.isValidEntityRef = isValidEntityRef;
-const backstage_auth_1 = require("../types/backstage-auth");
+const backstage_auth_1 = require("../types/backstage-auth.js");
 /**
  * Parse Backstage entity reference string
  * Format: [kind]:[namespace]/[name]

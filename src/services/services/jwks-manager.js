@@ -12,7 +12,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.JWKSManager = void 0;
 const node_fetch_1 = __importDefault(require("node-fetch"));
 const jwks_rsa_1 = __importDefault(require("jwks-rsa"));
-const backstage_auth_1 = require("../types/backstage-auth");
+const backstage_auth_1 = require("../../types/backstage-auth.js");
 /**
  * JWKS Manager class
  * Handles fetching and caching of JWKS from Backstage

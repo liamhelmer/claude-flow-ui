@@ -11,7 +11,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.TokenValidator = void 0;
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
-const backstage_auth_1 = require("../types/backstage-auth");
+const backstage_auth_1 = require("../../types/backstage-auth.js");
 const identity_resolver_1 = require("./identity-resolver");
 /**
  * Token Validator class
