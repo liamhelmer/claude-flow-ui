@@ -89,7 +89,18 @@ class WebSocketClient {
       }
 
       console.debug('[WebSocket] Attempting to connect to:', this.url);
-      
+
+      // Get authentication token from sessionStorage
+      let authToken: string | null = null;
+      if (typeof window !== 'undefined') {
+        authToken = sessionStorage.getItem('backstage_jwt_token');
+        if (authToken) {
+          console.debug('[WebSocket] Found authentication token in sessionStorage:', authToken.substring(0, 20) + '...');
+        } else {
+          console.debug('[WebSocket] No authentication token found in sessionStorage');
+        }
+      }
+
       this.socket = io(this.url, {
         path: '/api/ws', // Use the /api/ws endpoint for WebSocket
         transports: ['websocket', 'polling'],
@@ -98,6 +109,24 @@ class WebSocketClient {
         reconnectionAttempts: this.maxReconnectAttempts,
         reconnectionDelay: 1000,
         reconnectionDelayMax: 5000,
+        // SECURITY: Pass token in Authorization header (extraHeaders), NOT in query params
+        // Query params are logged and visible in URLs - a security risk
+        extraHeaders: authToken ? {
+          'Authorization': `Bearer ${authToken}`
+        } : undefined,
+        // Auth callback for Socket.IO internal auth mechanism (backup)
+        auth: (cb) => {
+          // Use callback form to get fresh token on each connection attempt
+          const freshToken = typeof window !== 'undefined' ? sessionStorage.getItem('backstage_jwt_token') : null;
+          console.debug('[WebSocket] 🔐 Auth callback executed, token present:', !!freshToken);
+          if (freshToken) {
+            console.debug('[WebSocket] 📤 Sending token via Authorization header');
+            cb({ token: freshToken });
+          } else {
+            console.debug('[WebSocket] ⚠️ No token available for auth callback');
+            cb({});
+          }
+        },
       });
 
       // Set up ALL event listeners BEFORE connecting to avoid race conditions
@@ -150,6 +179,11 @@ class WebSocketClient {
 
       this.socket.on('session-destroyed', (data) => {
         this.emit('session-destroyed', data);
+      });
+
+      this.socket.on('auth-error', (data) => {
+        console.error('[WebSocket] Authentication error:', data);
+        this.emit('auth-error', data);
       });
 
       // Terminal spawning events
@@ -248,6 +282,7 @@ class WebSocketClient {
       console.debug('[WebSocket] Socket disconnected and cleaned up');
     }
     this.isConnecting = false;
+    this.reconnectAttempts = 0;
     this.listeners.clear();
   }
 

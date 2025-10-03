@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { cn } from '@/lib/utils';
-import { Terminal, Plus, X, Menu } from 'lucide-react';
+import { Terminal, Plus, X, Menu, LogOut } from 'lucide-react';
+import { useAuth } from '@/components/auth/AuthProvider';
 
 interface Terminal {
   id: string;
@@ -32,9 +33,16 @@ export default function TerminalSidebar({
   const [error, setError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
   const maxRetries = 3;
+  const { isAuthRequired } = useAuth();
 
   // Memoized fetch function with improved error handling
   const fetchTerminals = useCallback(async () => {
+    // Don't fetch if auth dialog is showing
+    if (isAuthRequired) {
+      console.debug('[TerminalSidebar] Skipping fetch - authentication required');
+      return;
+    }
+
     try {
       console.debug('[TerminalSidebar] Fetching terminals from /api/terminals...');
 
@@ -45,11 +53,21 @@ export default function TerminalSidebar({
         signal: controller.signal,
         headers: {
           'Cache-Control': 'no-cache',
+          ...(typeof window !== 'undefined' && sessionStorage.getItem('backstage_jwt_token')
+            ? { 'Authorization': `Bearer ${sessionStorage.getItem('backstage_jwt_token')}` }
+            : {}),
         },
       });
 
       clearTimeout(timeoutId);
       console.debug('[TerminalSidebar] Response status:', response.status);
+
+      // If we get 401, stop retrying and wait for auth
+      if (response.status === 401) {
+        console.debug('[TerminalSidebar] Authentication required, stopping fetch');
+        setInitialFetchDone(true);
+        return;
+      }
 
       if (!response.ok) {
         throw new Error(`Failed to fetch terminals: ${response.status} ${response.statusText}`);
@@ -64,6 +82,13 @@ export default function TerminalSidebar({
     } catch (fetchError) {
       console.error('[TerminalSidebar] Failed to fetch terminals:', fetchError);
 
+      // Don't retry if auth is required
+      if (isAuthRequired) {
+        console.debug('[TerminalSidebar] Skipping retry - authentication required');
+        setInitialFetchDone(true);
+        return;
+      }
+
       if (retryCount < maxRetries) {
         setRetryCount(prev => prev + 1);
         console.log(`[TerminalSidebar] Retrying fetch (${retryCount + 1}/${maxRetries})...`);
@@ -77,7 +102,7 @@ export default function TerminalSidebar({
 
       setInitialFetchDone(true);
     }
-  }, [retryCount, maxRetries]);
+  }, [retryCount, maxRetries, isAuthRequired]);
 
   // Fetch terminal list with optimized intervals
   useEffect(() => {
@@ -87,15 +112,21 @@ export default function TerminalSidebar({
       return;
     }
 
+    // Don't start polling if auth is required
+    if (isAuthRequired) {
+      console.debug('[TerminalSidebar] Skipping polling - authentication required');
+      return;
+    }
+
     console.debug('[TerminalSidebar] Component mounted, starting terminal fetch...');
 
     // Fetch immediately on mount
     fetchTerminals();
 
-    // Refresh terminal list every 3 seconds (reduced frequency for better performance)
-    const interval = setInterval(fetchTerminals, 3000);
+    // Refresh terminal list every 5 seconds (max 1 request per second minimum)
+    const interval = setInterval(fetchTerminals, 5000);
     return () => clearInterval(interval);
-  }, [fetchTerminals]); // Include fetchTerminals in dependencies
+  }, [fetchTerminals, isAuthRequired]); // Include isAuthRequired to restart polling after auth
 
   // Spawn a new terminal with improved error handling
   const handleSpawnTerminal = useCallback(async () => {
@@ -110,7 +141,12 @@ export default function TerminalSidebar({
 
       const response = await fetch('/api/terminals/spawn', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(typeof window !== 'undefined' && sessionStorage.getItem('backstage_jwt_token')
+            ? { 'Authorization': `Bearer ${sessionStorage.getItem('backstage_jwt_token')}` }
+            : {}),
+        },
         body: JSON.stringify({
           command: '/bin/bash --login',
           name: `Bash ${terminals.length + 1}`
@@ -148,6 +184,11 @@ export default function TerminalSidebar({
 
       const response = await fetch(`/api/terminals/${id}`, {
         method: 'DELETE',
+        headers: {
+          ...(typeof window !== 'undefined' && sessionStorage.getItem('backstage_jwt_token')
+            ? { 'Authorization': `Bearer ${sessionStorage.getItem('backstage_jwt_token')}` }
+            : {}),
+        },
         signal: controller.signal,
       });
 
@@ -202,6 +243,9 @@ export default function TerminalSidebar({
 
     return mainCommand || 'Terminal';
   }, []);
+
+  // Get auth context
+  const { isAuthenticated, userInfo, logout } = useAuth();
 
   return (
     <div
@@ -348,12 +392,36 @@ export default function TerminalSidebar({
               </button>
             </div>
 
-          {/* Footer Info */}
-          <div className="p-4 border-t border-gray-700 text-xs text-gray-400">
-            <div className="space-y-1">
-              <div>• Click terminal to switch</div>
-              <div>• Click × to close terminal</div>
-              <div>• Main terminal cannot be closed</div>
+          {/* Footer Info and Auth */}
+          <div className="border-t border-gray-700">
+            {/* User info and logout button */}
+            {isAuthenticated && (
+              <div className="p-3 border-b border-gray-700">
+                <div className="flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2 text-gray-400 min-w-0">
+                    <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                    <span className="truncate">
+                      {userInfo?.name || userInfo?.email || 'Authenticated'}
+                    </span>
+                  </div>
+                  <button
+                    onClick={logout}
+                    className="p-1.5 hover:bg-gray-800 rounded transition-colors text-gray-400 hover:text-red-400"
+                    title="Logout"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Terminal info */}
+            <div className="p-4 text-xs text-gray-400">
+              <div className="space-y-1">
+                <div>• Click terminal to switch</div>
+                <div>• Click × to close terminal</div>
+                <div>• Main terminal cannot be closed</div>
+              </div>
             </div>
           </div>
         </div>

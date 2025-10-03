@@ -1,6 +1,6 @@
 {
   "name": "@liamhelmer/claude-flow-ui",
-  "version": "1.3.0",
+  "version": "1.4.1",
   "description": "A modern web-based terminal and monitoring interface for Claude Flow with real-time system monitoring and tmux integration",
   "author": "Liam Helmer <liam@liamhelmer.com>",
   "license": "MIT",
@@ -170,8 +170,11 @@
     "clsx": "^2.1.1",
     "cors": "^2.8.5",
     "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "jwks-rsa": "^3.2.0",
     "lucide-react": "^0.541.0",
     "next": "^15.5.0",
+    "node-fetch": "^2.7.0",
     "node-pty": "^1.0.0",
     "postcss": "^8.5.0",
     "react": "^18.3.1",
@@ -187,7 +190,7 @@
     "zustand": "^5.0.1"
   },
   "devDependencies": {
-    "@lhci/cli": "^0.12.0",
+    "@lhci/cli": "^0.15.1",
     "@playwright/test": "^1.55.0",
     "@tailwindcss/typography": "^0.5.18",
     "@testing-library/dom": "^10.4.1",
@@ -196,10 +199,15 @@
     "@testing-library/user-event": "^14.6.1",
     "@types/jest": "^30.0.0",
     "@types/jest-axe": "^3.5.9",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node-fetch": "^2.6.13",
     "@types/react-tabs": "^2.3.4",
     "@types/react-test-renderer": "^19.1.0",
+    "@types/validator": "^13.12.2",
+    "@types/ws": "^8.5.12",
     "eslint": "^8.57.1",
     "eslint-config-next": "^15.5.0",
+    "isomorphic-dompurify": "^2.21.0",
     "jest": "^30.0.5",
     "jest-axe": "^10.0.0",
     "jest-environment-jsdom": "^30.0.5",
@@ -208,10 +216,7 @@
     "react-test-renderer": "^18.3.1",
     "supertest": "^7.1.4",
     "ts-node": "^10.9.2",
-    "isomorphic-dompurify": "^2.21.0",
     "validator": "^13.12.0",
-    "ws": "^8.18.0",
-    "@types/validator": "^13.12.2",
-    "@types/ws": "^8.5.12"
+    "ws": "^8.18.0"
   }
 }

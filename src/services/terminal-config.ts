@@ -122,6 +122,9 @@ class TerminalConfigService {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
+          ...(typeof window !== 'undefined' && sessionStorage.getItem('backstage_jwt_token')
+            ? { 'Authorization': `Bearer ${sessionStorage.getItem('backstage_jwt_token')}` }
+            : {}),
         },
         // Add timeout
         signal: AbortSignal.timeout(5000),

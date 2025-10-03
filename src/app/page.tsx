@@ -64,10 +64,21 @@ export default function HomePage() {
         signal: controller.signal,
         headers: {
           'Cache-Control': 'no-cache',
+          ...(typeof window !== 'undefined' && sessionStorage.getItem('backstage_jwt_token')
+            ? { 'Authorization': `Bearer ${sessionStorage.getItem('backstage_jwt_token')}` }
+            : {}),
         },
       });
 
       clearTimeout(timeoutId);
+
+      // If we get 401, stop retrying and wait for auth
+      if (response.status === 401) {
+        console.log('[HomePage] Authentication required, stopping fetch');
+        setInitialSessionFetched(true);
+        setLoading(false);
+        return;
+      }
 
       if (response.ok) {
         const terminals = await response.json();
@@ -271,7 +282,12 @@ export default function HomePage() {
     // Handle closing terminals (except the main one which is handled by the backend)
     try {
       const response = await fetch(`/api/terminals/${sessionId}`, {
-        method: 'DELETE'
+        method: 'DELETE',
+        headers: {
+          ...(typeof window !== 'undefined' && sessionStorage.getItem('backstage_jwt_token')
+            ? { 'Authorization': `Bearer ${sessionStorage.getItem('backstage_jwt_token')}` }
+            : {}),
+        },
       });
 
       if (response.ok) {

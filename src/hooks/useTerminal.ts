@@ -583,7 +583,7 @@ export const useTerminal = ({
     };
 
     return terminal;
-  }, [sendData, onData, isConnected]); // Include critical functions needed for input
+  }, [sendData, onData, isConnected, sessionId, terminalConfig]); // Include all dependencies
 
   const writeToTerminal = useCallback((data: string) => {
     if (terminalRef.current) {
@@ -939,6 +939,14 @@ export const useTerminal = ({
     }
   }, []);
 
+  const handleAuthError = useCallback((data: any) => {
+    console.error('[Terminal] Authentication error:', data);
+    // Emit custom event that can be caught by React components
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('auth-error', { detail: data }));
+    }
+  }, []);
+
   // Track terminal initialization state (moved to top for clarity)
   const [isTerminalReady, setIsTerminalReady] = useState(false);
 
@@ -955,14 +963,19 @@ export const useTerminal = ({
     terminalData?: (data: any) => void;
     terminalError?: (data: any) => void;
     connectionChange?: (connected: boolean) => void;
+    authError?: (data: any) => void;
   }>({});
+
+  // Add ref for auth error handler
+  const handleAuthErrorRef = useRef<(data: any) => void>();
 
   // Update refs to prevent stale closures in production
   useEffect(() => {
     handleTerminalDataRef.current = handleTerminalData;
     handleTerminalErrorRef.current = handleTerminalError;
     handleConnectionChangeRef.current = handleConnectionChange;
-  }, [handleTerminalData, handleTerminalError, handleConnectionChange]);
+    handleAuthErrorRef.current = handleAuthError;
+  }, [handleTerminalData, handleTerminalError, handleConnectionChange, handleAuthError]);
 
   // FIXED: Stable WebSocket event registration with proper deduplication
   useEffect(() => {
@@ -994,7 +1007,7 @@ export const useTerminal = ({
 
     // Clean up any existing listeners before registering new ones
     const existingCallbacks = listenerCallbacksRef.current;
-    if (existingCallbacks.terminalData || existingCallbacks.terminalError || existingCallbacks.connectionChange) {
+    if (existingCallbacks.terminalData || existingCallbacks.terminalError || existingCallbacks.connectionChange || existingCallbacks.authError) {
       console.debug('[Terminal] 🧹 Cleaning up existing listeners before re-registration');
       try {
         if (existingCallbacks.terminalData) {
@@ -1006,6 +1019,9 @@ export const useTerminal = ({
         }
         if (existingCallbacks.connectionChange) {
           off('connection-change', existingCallbacks.connectionChange);
+        }
+        if (existingCallbacks.authError) {
+          off('auth-error', existingCallbacks.authError);
         }
       } catch (error) {
         console.debug('[Terminal] ⚠️ Error cleaning up old listeners:', error);
@@ -1036,11 +1052,19 @@ export const useTerminal = ({
       }
     };
 
+    const stableHandleAuthError = (data: any) => {
+      // Use the ref to get the latest handler - critical for production
+      if (handleAuthErrorRef.current) {
+        handleAuthErrorRef.current(data);
+      }
+    };
+
     // Store callbacks and key for cleanup
     listenerCallbacksRef.current = {
       terminalData: stableHandleTerminalData,
       terminalError: stableHandleTerminalError,
-      connectionChange: stableHandleConnectionChange
+      connectionChange: stableHandleConnectionChange,
+      authError: stableHandleAuthError
     };
     listenerKeyRef.current = currentListenerKey;
 
@@ -1050,6 +1074,7 @@ export const useTerminal = ({
       on('terminal-error', stableHandleTerminalError);
       on('connection-change', stableHandleConnectionChange);
       on('history-refreshed', stableHandleTerminalData);
+      on('auth-error', stableHandleAuthError);
 
       console.debug('[Terminal] ✅ WebSocket listeners registered successfully for session:', sessionId);
     } catch (error) {
@@ -1060,7 +1085,8 @@ export const useTerminal = ({
 
     // Cleanup function
     return () => {
-      console.debug('[Terminal] 🧹 Cleaning up WebSocket listeners (instance:', hookInstanceId.current, ', session:', sessionId, ')');
+      const currentInstanceId = hookInstanceId.current;
+      console.debug('[Terminal] 🧹 Cleaning up WebSocket listeners (instance:', currentInstanceId, ', session:', sessionId, ')');
 
       const callbacks = listenerCallbacksRef.current;
 
@@ -1074,6 +1100,9 @@ export const useTerminal = ({
         }
         if (callbacks.connectionChange) {
           off('connection-change', callbacks.connectionChange);
+        }
+        if (callbacks.authError) {
+          off('auth-error', callbacks.authError);
         }
 
         listenerKeyRef.current = '';
@@ -1267,7 +1296,7 @@ export const useTerminal = ({
       isActive = false;
       clearTimeout(timer);
     };
-  }, []); // Run once on mount
+  }, [containerReady]); // Include containerReady dependency
   
   // Initialize terminal when all conditions are met
   useEffect(() => {
@@ -1372,7 +1401,7 @@ export const useTerminal = ({
         initializationInProgress.current = false;
       }, 100);
     }
-  }, [backendTerminalConfig?.cols, backendTerminalConfig?.rows, isConnected, sendData, sessionId, initTerminal, focusTerminal]); // Critical deps including sendData and sessionId
+  }, [backendTerminalConfig?.cols, backendTerminalConfig?.rows, isConnected, sendData, sessionId, initTerminal, focusTerminal, containerReady, isTerminalReady]); // Include all dependencies
 
   // Connect WebSocket first before terminal initialization
   useEffect(() => {
