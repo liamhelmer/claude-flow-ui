@@ -241,39 +241,14 @@ jobs:
       # Full integration testing with all services
       - name: Integration tests full
         if: matrix.test-suite == 'integration-tests-full'
-        services:
-          postgres:
-            image: postgres:15-alpine
-            env:
-              POSTGRES_PASSWORD: test_pass
-              POSTGRES_USER: test_user
-              POSTGRES_DB: claude_flow_test
-            options: >
-              --health-cmd pg_isready
-              --health-interval 10s
-              --health-timeout 5s
-              --health-retries 5
-            ports:
-              - 5432:5432
-          redis:
-            image: redis:7-alpine
-            options: >
-              --health-cmd "redis-cli ping"
-              --health-interval 10s
-              --health-timeout 5s
-              --health-retries 5
-            ports:
-              - 6379:6379
         run: |
           echo "🔧 Running full integration tests..."
-
-          # Wait for services
-          timeout 60 bash -c 'until pg_isready -h localhost -p 5432 -U test_user; do sleep 2; done'
-          timeout 60 bash -c 'until redis-cli -h localhost -p 6379 ping | grep -q PONG; do sleep 2; done'
 
           # Run integration tests
           if npm run --silent | grep -q "test:integration"; then
             npm run test:integration
+          else
+            echo "⏭️ Integration tests not configured, skipping"
           fi
 
       # Cross-browser E2E testing
