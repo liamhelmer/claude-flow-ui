@@ -1,0 +1,165 @@
+name: Publish Package
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'package.json'
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+
+jobs:
+  check-version:
+    name: Check Version Change
+    runs-on: ubuntu-latest
+    outputs:
+      version-changed: ${{ steps.check.outputs.changed }}
+      new-version: ${{ steps.check.outputs.version }}
+      tag-exists: ${{ steps.check.outputs.tag_exists }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check if version changed
+        id: check
+        run: |
+          # Get current version from package.json
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          echo "Current version: $CURRENT_VERSION"
+          echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+
+          # Check if this is the first commit or if package.json changed
+          if git rev-parse HEAD~1 >/dev/null 2>&1; then
+            # Get previous version
+            git show HEAD~1:package.json > /tmp/old-package.json 2>/dev/null || echo '{"version":"0.0.0"}' > /tmp/old-package.json
+            PREVIOUS_VERSION=$(node -p "require('/tmp/old-package.json').version")
+            echo "Previous version: $PREVIOUS_VERSION"
+
+            if [ "$CURRENT_VERSION" != "$PREVIOUS_VERSION" ]; then
+              echo "Version changed from $PREVIOUS_VERSION to $CURRENT_VERSION"
+              echo "changed=true" >> $GITHUB_OUTPUT
+            else
+              echo "Version unchanged"
+              echo "changed=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            # First commit
+            echo "First commit, treating as version change"
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+          # Check if tag already exists
+          if git ls-remote --tags origin | grep -q "refs/tags/v$CURRENT_VERSION$"; then
+            echo "Tag v$CURRENT_VERSION already exists"
+            echo "tag_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "Tag v$CURRENT_VERSION does not exist"
+            echo "tag_exists=false" >> $GITHUB_OUTPUT
+          fi
+
+  publish:
+    name: Publish to Registries
+    needs: check-version
+    if: needs.check-version.outputs.version-changed == 'true' && needs.check-version.outputs.tag-exists == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run linting
+        run: npm run lint
+
+      - name: Build package
+        run: npm run build:static
+
+      - name: Create Git tag
+        run: |
+          VERSION=${{ needs.check-version.outputs.new-version }}
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "v$VERSION" -m "Release v$VERSION"
+          git push origin "v$VERSION"
+
+      - name: Create GitHub Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ needs.check-version.outputs.new-version }}
+          release_name: Release v${{ needs.check-version.outputs.new-version }}
+          body: |
+            ## Release v${{ needs.check-version.outputs.new-version }}
+
+            Auto-generated release from package.json version change.
+
+            ### Installation
+            ```bash
+            npm install @liamhelmer/claude-flow-ui@${{ needs.check-version.outputs.new-version }}
+            ```
+
+            ### Changes
+            See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
+          draft: false
+          prerelease: false
+
+      - name: Publish to npmjs (if token available)
+        if: secrets.NPM_TOKEN != ''
+        run: |
+          echo "Publishing to npmjs..."
+          npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Skip npmjs publish (no token)
+        if: secrets.NPM_TOKEN == ''
+        run: |
+          echo "⚠️ NPM_TOKEN secret not found, skipping npmjs publish"
+          echo "To enable npmjs publishing, add NPM_TOKEN secret to your repository"
+
+      - name: Setup Node.js for GitHub Packages
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@liamhelmer'
+
+      - name: Publish to GitHub Packages
+        run: |
+          echo "Publishing to GitHub Packages..."
+          npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish Summary
+        run: |
+          echo "## 📦 Package Published" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** v${{ needs.check-version.outputs.new-version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Registries" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ secrets.NPM_TOKEN }}" != "" ]; then
+            echo "- ✅ npmjs.com: https://www.npmjs.com/package/@liamhelmer/claude-flow-ui" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- ⚠️ npmjs.com: Skipped (no NPM_TOKEN)" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "- ✅ GitHub Packages: https://github.com/${{ github.repository }}/packages" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Installation" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "npm install @liamhelmer/claude-flow-ui@${{ needs.check-version.outputs.new-version }}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
