@@ -7,6 +7,7 @@ import { useTerminal } from '@/hooks/useTerminal';
 import TerminalSidebar from '@/components/sidebar/TerminalSidebar';
 import Terminal from '@/components/terminal/Terminal';
 import { cn } from '@/lib/utils';
+import { handleUrlAuthentication, getAuthToken } from '@/lib/auth';
 import type { TerminalSession } from '@/types';
 
 export default function HomePage() {
@@ -40,6 +41,25 @@ export default function HomePage() {
 
   // REMOVED: Refresh is handled by the Terminal component
   // No need for duplicate refresh handling here
+
+  // Handle automatic login from URL parameter (e.g., /?backstage_token=TOKEN)
+  // Backstage can generate links to auto-authenticate users
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const tokenFound = handleUrlAuthentication();
+
+    if (tokenFound) {
+      console.log('[HomePage] 🔐 Authenticated from URL parameter');
+    } else {
+      const existingToken = getAuthToken();
+      if (existingToken) {
+        console.log('[HomePage] 🔐 Using existing token from sessionStorage');
+      } else {
+        console.log('[HomePage] ⚠️ No authentication token found');
+      }
+    }
+  }, []);
 
   // Track connection state and whether we've ever connected
   useEffect(() => {

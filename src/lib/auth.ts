@@ -129,3 +129,69 @@ export function withAuthHeader(options: RequestInit = {}): RequestInit {
 export async function authenticatedFetch(url: string, options: RequestInit = {}): Promise<Response> {
   return fetch(url, withAuthHeader(options));
 }
+
+/**
+ * Extract token from URL query parameter
+ * Supports: /?backstage_token=TOKEN
+ *
+ * @param paramName - Name of the query parameter (default: 'backstage_token')
+ * @returns Token string or null if not found
+ */
+export function extractTokenFromUrl(paramName: string = 'backstage_token'): string | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const urlParams = new URLSearchParams(window.location.search);
+  return urlParams.get(paramName);
+}
+
+/**
+ * Remove token from URL (security best practice)
+ * Cleans up the URL after extracting the token to prevent it from being logged or shared
+ *
+ * @param paramName - Name of the query parameter to remove (default: 'backstage_token')
+ */
+export function removeTokenFromUrl(paramName: string = 'backstage_token'): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const newUrl = new URL(window.location.href);
+  if (newUrl.searchParams.has(paramName)) {
+    newUrl.searchParams.delete(paramName);
+    window.history.replaceState({}, '', newUrl.toString());
+  }
+}
+
+/**
+ * Handle automatic login from URL parameter
+ * Extracts token from URL, stores it, and cleans up the URL
+ *
+ * Usage:
+ * ```typescript
+ * // In your component
+ * useEffect(() => {
+ *   handleUrlAuthentication();
+ * }, []);
+ * ```
+ *
+ * Backstage can generate links like:
+ * https://your-app.com/?backstage_token=eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9...
+ *
+ * @param paramName - Name of the query parameter (default: 'backstage_token')
+ * @returns True if token was found and stored, false otherwise
+ */
+export function handleUrlAuthentication(paramName: string = 'backstage_token'): boolean {
+  const token = extractTokenFromUrl(paramName);
+
+  if (token) {
+    console.log('[Auth] Found token in URL, storing for authentication');
+    setAuthToken(token);
+    removeTokenFromUrl(paramName);
+    console.log('[Auth] Token stored, URL cleaned');
+    return true;
+  }
+
+  return false;
+}
