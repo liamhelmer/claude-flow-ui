@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import { Terminal, Plus, X, Menu, LogOut } from 'lucide-react';
 import { useAuth } from '@/components/auth/AuthProvider';
-import { getTerminals, spawnTerminal, type Terminal as TerminalType } from '@/lib/api';
+import { getTerminals, spawnTerminal, checkTokenChange, type Terminal as TerminalType } from '@/lib/api';
 
 interface TerminalSidebarProps {
   isOpen: boolean;
@@ -29,6 +29,9 @@ export default function TerminalSidebar({
 
   // Fetch terminals using centralized API client with exponential backoff
   const fetchTerminals = useCallback(async () => {
+    // Check if token changed - this clears retry state automatically
+    checkTokenChange();
+
     // Don't fetch if auth dialog is showing
     if (isAuthRequired) {
       console.debug('[TerminalSidebar] Skipping fetch - authentication required');

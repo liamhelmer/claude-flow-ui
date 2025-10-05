@@ -6,10 +6,20 @@ const TOKEN_KEY = 'backstage_jwt_token';
 
 /**
  * Store JWT token in sessionStorage
+ * Clears API retry state to allow immediate retries with new credentials
  */
 export function setAuthToken(token: string): void {
   if (typeof window !== 'undefined') {
     sessionStorage.setItem(TOKEN_KEY, token);
+
+    // Clear API retry state so requests can be retried immediately with new token
+    // Import is done dynamically to avoid circular dependencies
+    import('./api').then(({ clearAllRetryState }) => {
+      clearAllRetryState();
+      console.debug('[Auth] Token set, retry state cleared');
+    }).catch(() => {
+      // Ignore errors if API module not loaded yet
+    });
   }
 }
 

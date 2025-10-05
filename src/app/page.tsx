@@ -8,7 +8,7 @@ import TerminalSidebar from '@/components/sidebar/TerminalSidebar';
 import Terminal from '@/components/terminal/Terminal';
 import { cn } from '@/lib/utils';
 import { handleUrlAuthentication, getAuthToken } from '@/lib/auth';
-import { getTerminals } from '@/lib/api';
+import { getTerminals, checkTokenChange } from '@/lib/api';
 import type { TerminalSession } from '@/types';
 
 export default function HomePage() {
@@ -75,6 +75,9 @@ export default function HomePage() {
   // Memoized fetch function using centralized API client with exponential backoff
   const fetchInitialSession = useCallback(async () => {
     try {
+      // Check if token changed - this clears retry state automatically
+      checkTokenChange();
+
       console.log('[HomePage] fetchInitialSession called - fetching from /api/terminals');
       setLoading(true);
 

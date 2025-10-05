@@ -140,11 +140,12 @@ async function fetchWithBackoff<T = any>(
           return await response.json();
         }
 
-        // Handle 401 - don't retry
+        // Handle 401 - don't retry, clear all state for fresh start
         if (response.status === 401) {
-          console.debug(`[API] Authentication required for ${url}`);
-          retryState.delete(cacheKey);
-          pendingRequests.delete(cacheKey);
+          console.debug(`[API] Authentication required for ${url}, clearing all retry state`);
+          // Clear ALL retry state so that when auth is provided, we can retry immediately
+          retryState.clear();
+          pendingRequests.clear();
           throw new Error('Authentication required');
         }
 
@@ -233,4 +234,27 @@ export function clearRetryState(url: string, method: string = 'GET'): void {
 export function clearAllRetryState(): void {
   retryState.clear();
   pendingRequests.clear();
+  console.debug('[API] Cleared all retry state');
+}
+
+/**
+ * Watch for authentication token changes and clear retry state
+ * This allows immediate retries when user authenticates
+ */
+let lastKnownToken: string | null = null;
+
+export function checkTokenChange(): boolean {
+  if (typeof window === 'undefined') return false;
+
+  const currentToken = sessionStorage.getItem('backstage_jwt_token');
+
+  // Token changed (either added, removed, or updated)
+  if (currentToken !== lastKnownToken) {
+    console.debug('[API] Token changed, clearing retry state for immediate retry');
+    lastKnownToken = currentToken;
+    clearAllRetryState();
+    return true;
+  }
+
+  return false;
 }
