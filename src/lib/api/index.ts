@@ -96,3 +96,6 @@ export class ApiClient {
 }
 
 export const apiClient = new ApiClient();
+
+// Export terminal API functions with exponential backoff
+export * from './terminals';

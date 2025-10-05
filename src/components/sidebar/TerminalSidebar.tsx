@@ -4,13 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import { Terminal, Plus, X, Menu, LogOut } from 'lucide-react';
 import { useAuth } from '@/components/auth/AuthProvider';
-
-interface Terminal {
-  id: string;
-  name: string;
-  command: string;
-  createdAt: string;
-}
+import { getTerminals, spawnTerminal, type Terminal as TerminalType } from '@/lib/api';
 
 interface TerminalSidebarProps {
   isOpen: boolean;
@@ -27,15 +21,13 @@ export default function TerminalSidebar({
   onSessionSelect,
   onSessionClose
 }: TerminalSidebarProps) {
-  const [terminals, setTerminals] = useState<Terminal[]>([]);
+  const [terminals, setTerminals] = useState<TerminalType[]>([]);
   const [loading, setLoading] = useState(false);
   const [initialFetchDone, setInitialFetchDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [retryCount, setRetryCount] = useState(0);
-  const maxRetries = 3;
   const { isAuthRequired } = useAuth();
 
-  // Memoized fetch function with improved error handling
+  // Fetch terminals using centralized API client with exponential backoff
   const fetchTerminals = useCallback(async () => {
     // Don't fetch if auth dialog is showing
     if (isAuthRequired) {
@@ -44,65 +36,33 @@ export default function TerminalSidebar({
     }
 
     try {
-      console.debug('[TerminalSidebar] Fetching terminals from /api/terminals...');
+      console.debug('[TerminalSidebar] Fetching terminals...');
 
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout
+      // Use centralized API client with built-in exponential backoff and deduplication
+      const data = await getTerminals();
 
-      const response = await fetch('/api/terminals', {
-        signal: controller.signal,
-        headers: {
-          'Cache-Control': 'no-cache',
-          ...(typeof window !== 'undefined' && sessionStorage.getItem('backstage_jwt_token')
-            ? { 'Authorization': `Bearer ${sessionStorage.getItem('backstage_jwt_token')}` }
-            : {}),
-        },
-      });
+      console.debug('[TerminalSidebar] Fetched terminals:', data);
+      setTerminals(data);
+      setError(null);
+      setInitialFetchDone(true);
+    } catch (fetchError) {
+      console.error('[TerminalSidebar] Failed to fetch terminals:', fetchError);
 
-      clearTimeout(timeoutId);
-      console.debug('[TerminalSidebar] Response status:', response.status);
-
-      // If we get 401, stop retrying and wait for auth
-      if (response.status === 401) {
+      // API client handles retries internally
+      if (fetchError instanceof Error && fetchError.message === 'Authentication required') {
         console.debug('[TerminalSidebar] Authentication required, stopping fetch');
         setInitialFetchDone(true);
         return;
       }
 
-      if (!response.ok) {
-        throw new Error(`Failed to fetch terminals: ${response.status} ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      console.debug('[TerminalSidebar] Fetched terminals:', data);
-      setTerminals(data);
-      setError(null);
-      setRetryCount(0);
-      setInitialFetchDone(true);
-    } catch (fetchError) {
-      console.error('[TerminalSidebar] Failed to fetch terminals:', fetchError);
-
-      // Don't retry if auth is required
-      if (isAuthRequired) {
-        console.debug('[TerminalSidebar] Skipping retry - authentication required');
-        setInitialFetchDone(true);
-        return;
-      }
-
-      if (retryCount < maxRetries) {
-        setRetryCount(prev => prev + 1);
-        console.log(`[TerminalSidebar] Retrying fetch (${retryCount + 1}/${maxRetries})...`);
-        // Exponential backoff
-        setTimeout(() => {
-          fetchTerminals();
-        }, Math.pow(2, retryCount) * 1000);
-      } else {
+      // Only show error if auth is not required
+      if (!isAuthRequired) {
         setError('Failed to load terminals. Please check your connection.');
       }
 
       setInitialFetchDone(true);
     }
-  }, [retryCount, maxRetries, isAuthRequired]);
+  }, [isAuthRequired]);
 
   // Fetch terminal list with optimized intervals
   useEffect(() => {
@@ -128,7 +88,7 @@ export default function TerminalSidebar({
     return () => clearInterval(interval);
   }, [fetchTerminals, isAuthRequired]); // Include isAuthRequired to restart polling after auth
 
-  // Spawn a new terminal with improved error handling
+  // Spawn a new terminal using centralized API client
   const handleSpawnTerminal = useCallback(async () => {
     if (loading) return;
 
@@ -136,38 +96,17 @@ export default function TerminalSidebar({
     setError(null);
 
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+      console.debug('[TerminalSidebar] Spawning new terminal...');
 
-      const response = await fetch('/api/terminals/spawn', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(typeof window !== 'undefined' && sessionStorage.getItem('backstage_jwt_token')
-            ? { 'Authorization': `Bearer ${sessionStorage.getItem('backstage_jwt_token')}` }
-            : {}),
-        },
-        body: JSON.stringify({
-          command: '/bin/bash --login',
-          name: `Bash ${terminals.length + 1}`
-        }),
-        signal: controller.signal,
-      });
+      // Use centralized API client
+      const newTerminal = await spawnTerminal();
 
-      clearTimeout(timeoutId);
-
-      if (response.ok) {
-        const newTerminal = await response.json();
-        setTerminals(prev => [...prev, newTerminal]);
-        // Auto-select the new terminal
-        onSessionSelect(newTerminal.id);
-        console.log('[TerminalSidebar] Successfully spawned new terminal:', newTerminal.id);
-      } else {
-        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-        throw new Error(errorData.error || `HTTP ${response.status}`);
-      }
+      setTerminals(prev => [...prev, newTerminal]);
+      // Auto-select the new terminal
+      onSessionSelect(newTerminal.id);
+      console.log('[TerminalSidebar] Successfully spawned new terminal:', newTerminal.id);
     } catch (spawnError: any) {
-      console.error('Failed to spawn terminal:', spawnError);
+      console.error('[TerminalSidebar] Failed to spawn terminal:', spawnError);
       setError(`Failed to create new terminal: ${spawnError?.message || 'Unknown error'}`);
     } finally {
       setLoading(false);
@@ -300,7 +239,6 @@ export default function TerminalSidebar({
                   <button
                     onClick={() => {
                       setError(null);
-                      setRetryCount(0);
                       fetchTerminals();
                     }}
                     className="mt-2 px-2 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors"
@@ -312,9 +250,6 @@ export default function TerminalSidebar({
               {!initialFetchDone ? (
                 <div className="text-center text-gray-400 py-4">
                   <div className="animate-pulse">Loading terminals...</div>
-                  {retryCount > 0 && (
-                    <div className="text-xs mt-2">Retry {retryCount}/{maxRetries}</div>
-                  )}
                 </div>
               ) : terminals.length === 0 ? (
                 <div className="text-center text-gray-400 py-4">

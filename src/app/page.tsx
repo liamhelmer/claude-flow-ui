@@ -8,6 +8,7 @@ import TerminalSidebar from '@/components/sidebar/TerminalSidebar';
 import Terminal from '@/components/terminal/Terminal';
 import { cn } from '@/lib/utils';
 import { handleUrlAuthentication, getAuthToken } from '@/lib/auth';
+import { getTerminals } from '@/lib/api';
 import type { TerminalSession } from '@/types';
 
 export default function HomePage() {
@@ -71,81 +72,51 @@ export default function HomePage() {
     }
   }, [connected, connecting, hasEverConnected]);
 
-  // Memoized fetch function to prevent recreation on every render
+  // Memoized fetch function using centralized API client with exponential backoff
   const fetchInitialSession = useCallback(async () => {
     try {
-      console.log('[HomePage] fetchInitialSession called - starting fetch from /api/terminals');
+      console.log('[HomePage] fetchInitialSession called - fetching from /api/terminals');
       setLoading(true);
 
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+      // Use centralized API client with built-in exponential backoff and deduplication
+      const terminals = await getTerminals();
 
-      const response = await fetch('/api/terminals', {
-        signal: controller.signal,
-        headers: {
-          'Cache-Control': 'no-cache',
-          ...(typeof window !== 'undefined' && sessionStorage.getItem('backstage_jwt_token')
-            ? { 'Authorization': `Bearer ${sessionStorage.getItem('backstage_jwt_token')}` }
-            : {}),
-        },
-      });
-
-      clearTimeout(timeoutId);
-
-      // If we get 401, stop retrying and wait for auth
-      if (response.status === 401) {
-        console.log('[HomePage] Authentication required, stopping fetch');
+      if (terminals && terminals.length > 0) {
+        const mainTerminal = terminals[0];
+        console.log('[HomePage] Found initial terminal:', mainTerminal.id);
+        // Set pending session ID immediately for Terminal to use
+        setPendingSessionId(mainTerminal.id);
+        const mainSession: TerminalSession = {
+          id: mainTerminal.id,
+          name: mainTerminal.name || 'Claude Flow Terminal',
+          isActive: true,
+          lastActivity: new Date(mainTerminal.createdAt),
+        };
+        addSession(mainSession);
+        setActiveSession(mainTerminal.id);
         setInitialSessionFetched(true);
-        setLoading(false);
-        return;
-      }
 
-      if (response.ok) {
-        const terminals = await response.json();
-        if (terminals && terminals.length > 0) {
-          const mainTerminal = terminals[0];
-          console.log('[HomePage] Found initial terminal:', mainTerminal.id);
-          // Set pending session ID immediately for Terminal to use
-          setPendingSessionId(mainTerminal.id);
-          const mainSession: TerminalSession = {
-            id: mainTerminal.id,
-            name: mainTerminal.name || 'Claude Flow Terminal',
-            isActive: true,
-            lastActivity: new Date(mainTerminal.createdAt),
-          };
-          addSession(mainSession);
-          setActiveSession(mainTerminal.id);
-          setInitialSessionFetched(true);
-
-          // INITIAL TERMINAL FIX: Ensure WebSocket connection before setting session
-          // This prevents race conditions with terminal data handling
-          // Only switch if not already on this session
-          if (connected && activeSessionId !== mainTerminal.id) {
-            console.debug('[HomePage] WebSocket already connected, switching to terminal session');
-            switchSession(mainTerminal.id);
-          } else if (!connected) {
-            console.debug('[HomePage] WebSocket not ready, session will be switched on connection');
-          }
-          setConnectionRetries(0); // Reset retries on success
-        } else {
-          console.log('[HomePage] No terminals found, waiting for server to create one...');
-          setInitialSessionFetched(true); // Don't keep retrying if no terminals
+        // INITIAL TERMINAL FIX: Ensure WebSocket connection before setting session
+        // This prevents race conditions with terminal data handling
+        // Only switch if not already on this session
+        if (connected && activeSessionId !== mainTerminal.id) {
+          console.debug('[HomePage] WebSocket already connected, switching to terminal session');
+          switchSession(mainTerminal.id);
+        } else if (!connected) {
+          console.debug('[HomePage] WebSocket not ready, session will be switched on connection');
         }
+        setConnectionRetries(0); // Reset retries on success
       } else {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        console.log('[HomePage] No terminals found, waiting for server to create one...');
+        setInitialSessionFetched(true); // Don't keep retrying if no terminals
       }
     } catch (error) {
       console.error('[HomePage] Failed to fetch initial terminals:', error);
 
-      if (connectionRetries < maxRetries) {
-        setConnectionRetries(prev => prev + 1);
-        console.log(`[HomePage] Retrying connection (${connectionRetries + 1}/${maxRetries})...`);
-        // Exponential backoff: 1s, 2s, 4s
-        setTimeout(() => {
-          if (!initialSessionFetched) {
-            fetchInitialSession();
-          }
-        }, Math.pow(2, connectionRetries) * 1000);
+      // API client handles retries internally, so if we get here, all retries failed
+      if (error instanceof Error && error.message === 'Authentication required') {
+        console.log('[HomePage] Authentication required, stopping fetch');
+        setInitialSessionFetched(true);
       } else {
         setError('Failed to connect to terminal server. Please refresh the page.');
         setInitialSessionFetched(true);
@@ -153,7 +124,7 @@ export default function HomePage() {
     } finally {
       setLoading(false);
     }
-  }, [initialSessionFetched, addSession, setActiveSession, connectionRetries, setLoading, setError, activeSessionId, connected, switchSession]);
+  }, [initialSessionFetched, addSession, setActiveSession, setLoading, setError, activeSessionId, connected, switchSession]);
 
   // Fetch initial terminal session from API immediately on mount
   useEffect(() => {
