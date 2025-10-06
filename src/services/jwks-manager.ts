@@ -69,17 +69,43 @@ export class JWKSManager {
       // Check if cache needs refresh
       await this.ensureCacheValid();
 
+      console.log(`[JWKS Manager] Attempting to retrieve signing key for kid: ${kid}`);
+      console.log(`[JWKS Manager] Cache stats:`, this.getCacheStats());
+
       // Get key from jwks-rsa client
       const key = await this.client.getSigningKey(kid);
+
+      console.log(`[JWKS Manager] Key object retrieved:`, {
+        kid: key.kid,
+        alg: key.alg,
+      });
+
       const publicKey = key.getPublicKey();
 
-      console.log(`[JWKS Manager] Retrieved signing key for kid: ${kid}`);
+      console.log(`[JWKS Manager] Successfully retrieved signing key for kid: ${kid}`);
+      console.log(`[JWKS Manager] Public key type:`, typeof publicKey, `length:`, publicKey?.length);
       return publicKey;
     } catch (error) {
-      console.error(`[JWKS Manager] Failed to get signing key:`, error);
+      console.error(`[JWKS Manager] Failed to get signing key for kid: ${kid}`);
+      console.error(`[JWKS Manager] Error details:`, error);
+      console.error(`[JWKS Manager] Error type:`, error?.constructor?.name);
+      console.error(`[JWKS Manager] Error message:`, error instanceof Error ? error.message : String(error));
+      console.error(`[JWKS Manager] Error stack:`, error instanceof Error ? error.stack : 'N/A');
+
+      // Log cache state for debugging
+      console.error(`[JWKS Manager] Cache state at error:`, this.getCacheStats());
+      if (this.cache) {
+        console.error(`[JWKS Manager] Available keys:`, this.cache.keys.map((k: any) => ({
+          kid: k.kid,
+          kty: k.kty,
+          alg: k.alg,
+          use: k.use,
+        })));
+      }
+
       throw new AuthenticationError(
         'JWKS_FETCH_FAILED' as AuthErrorType,
-        'Failed to retrieve signing key',
+        `Failed to retrieve signing key: ${error instanceof Error ? error.message : String(error)}`,
         500,
         { kid, error: error instanceof Error ? error.message : String(error) }
       );
